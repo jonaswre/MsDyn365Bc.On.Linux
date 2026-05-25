@@ -404,16 +404,16 @@ jobs:
             F="project/$d/app.json"
             [ -f "$F" ] || continue
             python3 - "$F" "$EFFECTIVE_RUNTIME" <<'PYEOF'
-import sys, json, pathlib
-p = pathlib.Path(sys.argv[1])
-d = json.loads(p.read_text())
-if d.get("runtime") != sys.argv[2]:
-    d["runtime"] = sys.argv[2]
-    p.write_text(json.dumps(d, indent=2) + "\n")
-    print(f"  patched {p}: runtime → {sys.argv[2]}")
-else:
-    print(f"  {p}: runtime already {sys.argv[2]}, skip")
-PYEOF
+          import sys, json, pathlib
+          p = pathlib.Path(sys.argv[1])
+          d = json.loads(p.read_text())
+          if d.get("runtime") != sys.argv[2]:
+              d["runtime"] = sys.argv[2]
+              p.write_text(json.dumps(d, indent=2) + "\n")
+              print(f"  patched {p}: runtime → {sys.argv[2]}")
+          else:
+              print(f"  {p}: runtime already {sys.argv[2]}, skip")
+          PYEOF
           done
 
       - name: Compile AL apps (no publish yet)
