@@ -58,7 +58,7 @@ on:
         type: string
       preprocessor_symbols:
         description: >-
-          Comma-separated preprocessor symbols passed to /preprocessorsymbols
+          Comma-separated preprocessor symbols passed to /define
           (e.g. "BC27PLUS,BC28PLUS"). Empty = no flag passed to the compiler.
         required: false
         type: string
@@ -382,8 +382,6 @@ jobs:
               AL_TOOL_DIR="$EXTRACT_DIR/lib/net8.0"
             fi
             chmod +x "$AL_TOOL_DIR/alc" 2>/dev/null || true
-            echo "alc usage/flags (for diagnostics):"
-            "$AL_TOOL_DIR/alc" 2>&1 | grep -i -E "(preprocess|symbol|usage|option)" || true
             # Create an AL wrapper so `AL compile ...` works in later steps.
             # The v16 dotnet tool ships AL.dll which routes the `compile`
             # subcommand; raw alc doesn't accept it — strip it here.
@@ -532,7 +530,7 @@ jobs:
           ANALYZER_LOAD_FAIL_PATTERN='AD0001|Could not load|BadImageFormatException|PlatformNotSupportedException'
 
           PP_FLAG=()
-          [ -n "$PREPROCESSOR_SYMBOLS" ] && PP_FLAG=("/preprocessorsymbols:$PREPROCESSOR_SYMBOLS")
+          [ -n "$PREPROCESSOR_SYMBOLS" ] && PP_FLAG=("/define:$PREPROCESSOR_SYMBOLS")
 
           compile_dir() {
             local src="$1"

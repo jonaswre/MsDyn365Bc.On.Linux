@@ -73,7 +73,7 @@ env:
   # Auto-derived from BC_VERSION when blank: BC 27 → 16.0, BC 28 → 17.0.
   RUNTIME_VERSION: ""
 
-  # Comma-separated preprocessor symbols passed to /preprocessorsymbols.
+  # Comma-separated preprocessor symbols passed to /define.
   # Example: "BC27PLUS,BC28PLUS" for a version-gated matrix leg.
   PREPROCESSOR_SYMBOLS: ""
 
@@ -342,7 +342,7 @@ jobs:
           ANALYZER_LOAD_FAIL_PATTERN='AD0001|Could not load|BadImageFormatException|PlatformNotSupportedException'
 
           PP_FLAG=()
-          [ -n "$PREPROCESSOR_SYMBOLS" ] && PP_FLAG=("/preprocessorsymbols:$PREPROCESSOR_SYMBOLS")
+          [ -n "$PREPROCESSOR_SYMBOLS" ] && PP_FLAG=("/define:$PREPROCESSOR_SYMBOLS")
 
           compile_dir() {
             local src="$1"
