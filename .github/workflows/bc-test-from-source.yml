@@ -383,11 +383,11 @@ jobs:
             fi
             chmod +x "$AL_TOOL_DIR/alc" 2>/dev/null || true
             # Create an AL wrapper so `AL compile ...` works in later steps.
-            # The dotnet global tool install would normally create this in
-            # ~/.dotnet/tools/; we replicate it here for the nupkg path.
+            # The v16 dotnet tool ships AL.dll which routes the `compile`
+            # subcommand; raw alc doesn't accept it — strip it here.
             mkdir -p "$HOME/.al-bin"
-            printf '#!/bin/bash\nexec "%s/alc" "$@"\n' "$AL_TOOL_DIR" \
-              > "$HOME/.al-bin/AL"
+            printf '#!/bin/bash\n[ "$1" = compile ] && shift\nexec "%s/alc" "$@"\n' \
+              "$AL_TOOL_DIR" > "$HOME/.al-bin/AL"
             chmod +x "$HOME/.al-bin/AL"
             echo "$HOME/.al-bin" >> "$GITHUB_PATH"
           fi
