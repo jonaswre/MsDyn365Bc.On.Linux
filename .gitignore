@@ -29,3 +29,4 @@ tools/TestRunner/lib/
 # not for the repo). See MICROSOFT-FEEDBACK.md investigation log for what
 # lives in here.
 .snapshots/
+extensions/minimal-test/*.app
