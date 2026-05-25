@@ -348,7 +348,20 @@ jobs:
           echo "Installing AL compiler $AL_TOOL"
           dotnet tool install -g \
             Microsoft.Dynamics.BusinessCentral.Development.Tools.Linux \
-            --version "$AL_TOOL" 2>/dev/null || true
+            --version "$AL_TOOL" 2>&1 || \
+          dotnet tool update -g \
+            Microsoft.Dynamics.BusinessCentral.Development.Tools.Linux \
+            --version "$AL_TOOL" 2>&1 || true
+          echo "Installed global tools:"
+          dotnet tool list -g
+          echo "AL tool store contents:"
+          find "$HOME/.dotnet/tools/.store/microsoft.dynamics.businesscentral.development.tools.linux" \
+            -maxdepth 4 -type d 2>/dev/null || echo "(nothing at ~/.dotnet/tools/.store)"
+          if [ -n "${DOTNET_ROOT:-}" ]; then
+            echo "DOTNET_ROOT=$DOTNET_ROOT"
+            find "$DOTNET_ROOT/tools/.store/microsoft.dynamics.businesscentral.development.tools.linux" \
+              -maxdepth 4 -type d 2>/dev/null || echo "(nothing at DOTNET_ROOT/tools/.store)"
+          fi
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
           bash bc-linux/scripts/workflow-summary.sh end AL_INSTALL
 
