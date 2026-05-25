@@ -243,16 +243,19 @@ Update `al_tool_version` row default from `16.2.28.57946` to *(auto-derived from
 | `.github/workflows/bc-test-from-source.yml` | Add inputs, patch step, PP_FLAG, al_tool auto-derive |
 | `examples/github-workflows/README.md` | New input rows, updated al_tool_version default note |
 | `examples/github-workflows/bc-test-from-source.yml` | Add new inputs to the consumer template |
-| `examples/azure-pipelines/bc-test-from-source.yml` | Add equivalent variables + patch step |
+| `examples/azure-pipelines/bc-test-from-source.yml` | Add `PREPROCESSOR_SYMBOLS` and `RUNTIME_VERSION` variables; change `AL_TOOL_VERSION` default to `''` (auto-derive); add patch step before compile; update `AL_TOOL_VERSION` comment |
 | `README.md` | New bc_version → runtime → al_tool mapping section |
 
-`bc-test-prebuilt.yml` is **not** touched — it has no compile step, so
-preprocessor symbols and runtime patching don't apply.
+`bc-test-prebuilt.yml` (both GitHub and Azure Pipelines flavours) is **not**
+touched — they have no compile step, so preprocessor symbols and runtime
+patching don't apply.
 
 ---
 
 ## Out of scope
 
+- A dedicated Azure Pipelines matrix example (the variables block in the
+  updated template is self-documenting; consumers can adapt without a separate
+  example file)
 - Patching `bc-linux/extensions/smoke-test/app.json` (intentionally left at 14.0)
-- Azure Pipelines matrix example (consumers can adapt from the GitHub example)
 - Any change to the test runner, entrypoint, or Docker image
