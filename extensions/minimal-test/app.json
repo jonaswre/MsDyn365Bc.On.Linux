@@ -1,0 +1,12 @@
+{
+  "id": "aaaaaaaa-0000-0000-0000-000000000001",
+  "name": "Minimal Test",
+  "publisher": "bc-linux",
+  "version": "1.0.0.0",
+  "runtime": "14.0",
+  "platform": "28.0.0.0",
+  "target": "OnPrem",
+  "idRanges": [
+    { "from": 99800, "to": 99849 }
+  ]
+}

@@ -55,9 +55,13 @@ from pathlib import Path
 BASELINE = {
     "8874ed3a-0643-4247-9ced-7a7002f7135d",  # System (AL platform symbols)
     "63ca2fa4-4f03-4f2b-a480-172fef340d3f",  # System Application
-    "f3552374-a1f2-4356-848e-196002525837",  # Business Foundation
-    "437dbf0e-84ff-417a-965d-ed2bb9650972",  # Base Application
-    "c1335042-3002-4257-bf8a-75c898ccb1b8",  # Application umbrella
+    # Business Foundation, Base Application, and Application umbrella are NOT
+    # hardcoded here — they are included only when the consumer's transitive
+    # dependency closure requires them. This lets platform-only extensions run
+    # without the full application stack installed for tenant.
+    # "f3552374-a1f2-4356-848e-196002525837",  # Business Foundation
+    # "437dbf0e-84ff-417a-965d-ed2bb9650972",  # Base Application
+    # "c1335042-3002-4257-bf8a-75c898ccb1b8",  # Application umbrella
 }
 
 # ── Test framework apps (kept in the closure when consumers depend on them) ──
@@ -183,6 +187,28 @@ def load_artifact_apps(artifact_dir: str) -> dict:
     return apps
 
 
+
+# ── Shorthand property → GUID mappings ───────────────────────────────────────
+# The app.json "platform" and "application" version properties are shorthand
+# for Microsoft's well-known app IDs. When a consumer declares these, we treat
+# them as explicit seeds so the transitive closure includes them (and their
+# dependents) in BC_KEEP_APP_IDS.
+#   platform    → System
+#   application → System Application + Business Foundation + Base Application
+#                 + Application umbrella
+# System Application is always in the BASELINE so it doesn't need to be here,
+# but listing it keeps the mapping self-documenting.
+PLATFORM_IDS = {
+    "8874ed3a-0643-4247-9ced-7a7002f7135d",  # System
+}
+APPLICATION_IDS = {
+    "63ca2fa4-4f03-4f2b-a480-172fef340d3f",  # System Application
+    "f3552374-a1f2-4356-848e-196002525837",  # Business Foundation
+    "437dbf0e-84ff-417a-965d-ed2bb9650972",  # Base Application
+    "c1335042-3002-4257-bf8a-75c898ccb1b8",  # Application umbrella
+}
+
+
 def read_consumer_seeds(app_json_paths, app_file_paths) -> set[str]:
     """Return the set of immediate dependency GUIDs declared by the consumer."""
     seeds = set()
@@ -193,6 +219,11 @@ def read_consumer_seeds(app_json_paths, app_file_paths) -> set[str]:
                 dep_id = (dep.get("id") or dep.get("appId") or "").lower()
                 if dep_id:
                     seeds.add(dep_id)
+            # Expand shorthand properties into their well-known GUIDs.
+            if data.get("platform"):
+                seeds |= PLATFORM_IDS
+            if data.get("application"):
+                seeds |= APPLICATION_IDS
         except Exception as e:
             print(f"WARN: cannot read {p}: {e}", file=sys.stderr)
     for p in app_file_paths:
