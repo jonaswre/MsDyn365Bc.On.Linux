@@ -20,7 +20,14 @@ artifacts/
 
 # AL development
 .alpackages/
+.albuilds/
+**/.albuilds/
 .dev/
+
+# Python tooling caches
+__pycache__/
+**/__pycache__/
+*.py[cod]
 
 # TestRunner WebSocket client (deprecated)
 tools/TestRunner/lib/
