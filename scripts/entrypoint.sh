@@ -1179,6 +1179,13 @@ PYEOF
     TOTAL_ELAPSED=$(( $(date +%s) - ENTRYPOINT_START ))
     echo "[entrypoint] [${TOTAL_ELAPSED}s] Ready for extensions. Total startup: ${TOTAL_ELAPSED}s"
     touch /tmp/bc-ready
+
+    # Opt-in web client PoC: self-host Microsoft's Prod.Client.WebCoreApp on
+    # Kestrel, pointed at this NST. EXPERIMENTAL — see docs/WEBCLIENT-POC.md.
+    if [ "${BC_WEBCLIENT:-0}" = "1" ]; then
+        echo "[entrypoint] BC_WEBCLIENT=1: starting web client on port ${BC_WEBCLIENT_PORT:-8080} (log: /tmp/webclient.log)"
+        /bc/scripts/start-webclient.sh > /tmp/webclient.log 2>&1 &
+    fi
 ) &
 
 wait $BC_PID

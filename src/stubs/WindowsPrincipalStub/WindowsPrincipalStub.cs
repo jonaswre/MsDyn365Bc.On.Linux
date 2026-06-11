@@ -25,6 +25,11 @@ namespace System.Security.Principal
         public SecurityIdentifier? User => new SecurityIdentifier("S-1-5-18");
         public SecurityIdentifier? Owner => null;
         public IntPtr Token => IntPtr.Zero;
+        // The BC web client's LogicalThread captures GetCurrent().AccessToken and
+        // re-impersonates it on session threads via RunImpersonated (which this
+        // stub runs without impersonation), so an invalid handle is fine.
+        public Microsoft.Win32.SafeHandles.SafeAccessTokenHandle AccessToken =>
+            new Microsoft.Win32.SafeHandles.SafeAccessTokenHandle();
         public TokenImpersonationLevel ImpersonationLevel => TokenImpersonationLevel.None;
         public bool IsAnonymous => false;
         public bool IsGuest => false;

@@ -124,18 +124,24 @@ namespace Microsoft.AspNetCore.Hosting
                 if (!string.IsNullOrEmpty(pathBase))
                     app.UsePathBase(pathBase);
 
-                // Set authenticated admin identity on every request
-                app.Use(async (context, nextMiddleware) =>
+                // Set authenticated admin identity on every request.
+                // HTTPSYS_STUB_INJECT_IDENTITY=0 disables this for processes that
+                // run their own authentication (e.g. the self-hosted web client,
+                // whose forms sign-in must not see a pre-authenticated principal).
+                if (Environment.GetEnvironmentVariable("HTTPSYS_STUB_INJECT_IDENTITY") != "0")
                 {
-                    var identity = new ClaimsIdentity(new[] {
-                        new Claim(ClaimTypes.Name, "admin"),
-                        new Claim(ClaimTypes.Role, "SUPER"),
-                        new Claim(ClaimTypes.Role, "AdminService"),
-                        new Claim(ClaimTypes.NameIdentifier, "00000000-0000-0000-0000-000000000001"),
-                    }, "Passthrough");
-                    context.User = new ClaimsPrincipal(identity);
-                    await nextMiddleware();
-                });
+                    app.Use(async (context, nextMiddleware) =>
+                    {
+                        var identity = new ClaimsIdentity(new[] {
+                            new Claim(ClaimTypes.Name, "admin"),
+                            new Claim(ClaimTypes.Role, "SUPER"),
+                            new Claim(ClaimTypes.Role, "AdminService"),
+                            new Claim(ClaimTypes.NameIdentifier, "00000000-0000-0000-0000-000000000001"),
+                        }, "Passthrough");
+                        context.User = new ClaimsPrincipal(identity);
+                        await nextMiddleware();
+                    });
+                }
 
                 next(app);
             };

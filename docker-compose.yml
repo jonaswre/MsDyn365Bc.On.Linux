@@ -38,6 +38,8 @@ services:
       - "${BC_API_PORT:-7052}:7052"
       - "${BC_MGMT_PORT:-7045}:7045"
       - "${BC_CLIENT_PORT:-7085}:7085"
+      # Web client (PoC, opt-in via BC_WEBCLIENT=1 — see docs/WEBCLIENT-POC.md)
+      - "${BC_WEBCLIENT_PORT:-8080}:8080"
     environment:
       BC_VERSION: ${BC_VERSION:-28.1}
       BC_COUNTRY: ${BC_COUNTRY:-w1}
@@ -62,6 +64,9 @@ services:
       BC_PROFILE_NST: ${BC_PROFILE_NST:-0}
       BC_ARTIFACT_URL: ${BC_ARTIFACT_URL:-}
       BC_TEST_APPS: ${BC_TEST_APPS:-}
+      # Opt-in: self-host Microsoft's real BC web client on Kestrel (port 8080).
+      # EXPERIMENTAL PoC — see docs/WEBCLIENT-POC.md.
+      BC_WEBCLIENT: ${BC_WEBCLIENT:-0}
       SQL_SERVER: sql
       # .NET runtime tuning. Defaults are inherited from the entrypoint
       # (gcServer=1, TieredCompilation=0). These pass-throughs let us A/B
