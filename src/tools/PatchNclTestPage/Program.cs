@@ -24,6 +24,7 @@ class Program
             Console.WriteLine("Usage: PatchNclTestPage <command> <input.dll> [output.dll]");
             Console.WriteLine("Commands: ncl     - Patch Nav.Ncl.dll (Assembly.Load → LoadFrom)");
             Console.WriteLine("          client  - Patch TestPageClient.dll (Async=true → false)");
+            Console.WriteLine("          userdelete - Patch Nav.Ncl.dll (allow deleting active session user)");
             return 1;
         }
 
@@ -46,6 +47,8 @@ class Program
             return PatchTestPageClient.Run(inputPath, outputPath);
         if (command == "types")
             return PatchNavTypes.Run(inputPath, outputPath);
+        if (command == "userdelete")
+            return PatchUserDeleteGuard.Run(inputPath, outputPath);
 
         // Default: patch Nav.Ncl.dll
 

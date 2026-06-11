@@ -5,81 +5,55 @@ continue specific lines of work.
 
 ---
 
-## Prompt 1: Fix the Post-Misc Container Crash
+## Prompt 1: Revalidate Full Bucket 4 After Patch Set Updates
 
-**Problem:** When running the full Bucket 4 test suite sequentially
-(ERM → SCM → Misc → Workflow → SCM-Service → SINGLESERVER), the BC container
-becomes unhealthy after Tests-Misc completes. The remaining 3 apps fail with
-"Failed to create run request" because the API is dead. This blocks us from
-producing a complete Bucket 4 number from a single sequential run.
+**Problem:** The historical post-Misc container crash was fixed by Patch #23,
+and the active-session user delete and headless client DotNet handle gaps are
+now patched as well. The next useful work is to re-run the full Microsoft
+Bucket 4 workload and update the benchmark notes with the current pass/fail
+profile.
 
-**What we have:**
-- Reproduced both locally and on GitHub Actions runner
-- ~52MB BC container log saved at:
-  `~/Documents/Repos/community/PipelinePerformanceComparison/benchmark-results/local-20260404/bc-container.log`
-- Per-app result files in the same directory:
-  `Tests-ERM-results.txt`, `Tests-SCM-results.txt`, `Tests-Misc-results.txt`
-- Benchmark log: `bucket4-local-full.log`
-- The full state at the moment of the crash is in `bc-container.log` (52MB)
-- ERM, SCM, Misc all completed successfully — the crash happens AFTER Misc finishes
+**Goal:** Run a fresh Bucket 4 benchmark with the current image and confirm
+that ERM, SCM, Misc, Workflow, SCM-Service, and SINGLESERVER all produce
+results without the container becoming unhealthy.
 
-**What we don't know:**
-- Exact crash trigger — whether it's a specific Misc test, cumulative state
-  from ERM+SCM+Misc, memory exhaustion, file handle leak, or something else
-- Whether running Misc in isolation crashes BC, or only after ERM+SCM precede it
-- Whether the crash is reproducible in a smaller workload
+**Suggested validation steps:**
 
-**Goal:** Find the root cause and fix it so a fresh container can run all 6
-Bucket 4 apps sequentially without crashing. Success = a clean local benchmark
-run with all 6 apps producing results.
-
-**Suggested investigation steps:**
-
-1. Read the tail of `bc-container.log` looking for the last entries before
-   the unhealthy state. Look for: stack traces, OutOfMemoryException, file
-   descriptor errors, NullReference patterns we haven't patched yet, or
-   any "fatal" / "abort" / "killed" lines.
-
-2. Check `dotnet-errors.txt` for unique error patterns that may correlate
-   with the crash window.
-
-3. Try running just `Tests-Misc.app` in a fresh container (no ERM/SCM
-   beforehand) to see if Misc alone is the trigger or if cumulative state
-   matters.
-
-4. If it's cumulative, try running ERM → Misc (skipping SCM) and SCM → Misc
-   (skipping ERM) to narrow down.
-
-5. Check container memory/CPU stats during the run with `docker stats` —
-   look for slow leaks.
-
-6. Look at `KNOWN-LIMITATIONS.md` in this repo for context on the existing
-   crash documentation.
+1. Build the current image and run the full Bucket 4 script from the
+   `PipelinePerformanceComparison` repo.
+2. Capture the exact image tag, BC version, patch set, host, and command.
+3. Check the final container health and the per-app test summaries.
+4. Search the logs for unhandled `NullReferenceException`,
+   `PlatformNotSupportedException`, `StackOverflowException`, and
+   `Failed to create run request`.
+5. Update the benchmark report and `KNOWN-LIMITATIONS.md` if a new active
+   failure bucket appears.
 
 **Constraints:**
-- Don't break the existing SQL tuning, BCRUNNER user, or any of the
-  Patches #17-22 in StartupHook.cs
-- Test the fix with a real `bash scripts/benchmark-bucket4.sh` run from the
-  PipelinePerformanceComparison repo (it triggers the same crash)
+- Keep the public test surface network-based: no `docker exec` dependency for
+  test setup, execution, result reads, or coverage.
+- Do not regress configurable credentials, license import, or Docker provider
+  parity settings.
 - Commit and push when done in both `bc-linux` (master) and
-  `PipelinePerformanceComparison` (main) as relevant
+  `PipelinePerformanceComparison` (main) as relevant.
 
 ---
 
-## Prompt 2: Get BC 29.0 Insider Artifacts Working
+## Prompt 2: Revalidate Newer Insider Artifacts
 
-**Problem:** Our benchmarks run on BC 27.5 (publicly available sandbox
-artifacts). Microsoft's pipeline runs on BC 29.0 (insider build). Side-by-
-side comparison is suggestive but not definitive because of the version
-mismatch.
+**Problem:** The public container matrix now tracks the supported BC 27.x and
+28.x artifact range, while Microsoft's internal comparison may use newer
+insider builds. Side-by-side comparison is suggestive but not definitive when
+the artifact versions differ.
 
 **What we have:**
-- Working bc-linux setup on 27.5 with Patches #1-22 in StartupHook.cs
+- Working bc-linux setup on the current supported public artifact range with
+  the current startup-hook and binary patch set
 - Cecil binary patches for `CodeAnalysis.dll`, `Mono.Cecil.dll`,
   `Nav.Ncl.dll`, `TestPageClient.dll`, `Nav.Types.dll`
 - Download script at `scripts/download-artifacts.sh`
 - Microsoft's Bucket 1: 151 min on their self-hosted runners (29.0)
-- Our Bucket 1 partial: 19 min local for 6 apps (27.5)
+- Our Bucket 1 partial: 19 min local for 6 apps on the older 27.5 baseline
 
 **Goal:** Get a working bc-linux container on BC 29.0 (insider build) and
 run the same Bucket 1 / Bucket 4 test apps so the comparison is
@@ -109,7 +83,7 @@ version-matched.
    to Microsoft's 151 min number.
 
 **Constraints:**
-- Don't break the 27.5 setup — keep both versions working
+- Don't break the current supported public artifact range
 - Document any 29.0-specific patches separately so we can compare effort
   needed across versions
 

@@ -1,5 +1,5 @@
 {
-  "name": "bc-linux TestRunner Ruleset",
+  "name": "Business Central container TestRunner Ruleset",
   "rules": [
     { "id": "PC0025", "action": "None", "justification": "ODataKeyFields uses custom Id/EntryNo for bc-test API compatibility" },
     { "id": "PC0026", "action": "None", "justification": "SystemId/lastModifiedDateTime not required for internal test runner API" },

@@ -1,10 +1,10 @@
-# Azure DevOps pipeline for running AL tests on a Business Central NST
-# running on Linux. Compiles your AL source (app + test apps) inside the
-# pipeline and publishes the compiled .app files to BC.
+# Azure DevOps pipeline for running AL tests on a Business Central
+# container. Compiles your AL source (app + test apps) inside the pipeline
+# and publishes the compiled .app files to BC.
 #
-# Powered by StefanMaron/MsDyn365Bc.On.Linux — runs unmodified Microsoft BC
-# on Linux via runtime patching of the Windows .NET service tier.
-# Image: ghcr.io/stefanmaron/msdyn365bc.on.linux/bc-runner:latest (public).
+# Powered by the Business Central container runtime — exposes the standard
+# Business Central container network surface from a hosted runner.
+# Image: ghcr.io/jonaswre/msdyn365bc.on.linux/bc-runner:latest (public).
 #
 # ──────────────────────────────────────────────────────────────────────
 # HOW TO USE
@@ -40,9 +40,11 @@ pool:
 
 variables:
   # ----- Edit these for your project ----------------------------------
-  BC_VERSION: '27.5'
+  BC_VERSION: 'latest'
   BC_COUNTRY: 'w1'
-  BC_TYPE: 'sandbox'
+  BC_TYPE: 'onprem'
+  BC_USERNAME: 'admin'
+  BC_PASSWORD: 'admin'
 
   # Space-separated dirs containing app.json for your production AL apps.
   # Leave empty ('') if your repo only has test apps.
@@ -80,7 +82,7 @@ variables:
   # step fails the pipeline if any cop DLL fails to load (AD0001,
   # 'Could not load', BadImageFormatException, PlatformNotSupportedException),
   # so a misconfigured cop can never produce a silently green build.
-  # See ANALYZER-SUPPORT-PLAN.md in the bc-linux repo for the gotchas.
+  # See ANALYZER-SUPPORT-PLAN.md in the runtime repo for the gotchas.
   ENABLE_CODE_COP: 'false'
   ENABLE_UI_COP: 'false'
   ENABLE_APP_SOURCE_COP: 'false'
@@ -104,11 +106,11 @@ variables:
   ENABLE_CODE_ANALYZERS_ON_TEST_APPS: 'false'
   # --------------------------------------------------------------------
 
-  # bc-linux runtime image (publicly available on GHCR — no auth needed).
-  BC_RUNNER_IMAGE: 'ghcr.io/stefanmaron/msdyn365bc.on.linux/bc-runner:latest'
+  # Business Central runner image (publicly available on GHCR — no auth needed).
+  BC_RUNNER_IMAGE: 'ghcr.io/jonaswre/msdyn365bc.on.linux/bc-runner:latest'
 
-  # Git ref of MsDyn365Bc.On.Linux to use for scripts (master, tag, or SHA).
-  BC_LINUX_REF: 'master'
+  # Git ref of the Business Central container runtime to use for scripts.
+  BC_RUNTIME_REF: 'master'
 
 steps:
   - checkout: self
@@ -116,27 +118,28 @@ steps:
 
   - bash: |
       set -e
-      git clone --depth 1 --branch "$(BC_LINUX_REF)" \
-        https://github.com/StefanMaron/MsDyn365Bc.On.Linux.git \
-        "$(Agent.BuildDirectory)/bc-linux"
-      ls "$(Agent.BuildDirectory)/bc-linux"
-    displayName: 'Clone MsDyn365Bc.On.Linux'
+      RUNTIME_REF="${BC_RUNTIME_REF:-master}"
+      git clone --depth 1 --branch "$RUNTIME_REF" \
+        https://github.com/jonaswre/MsDyn365Bc.On.Linux.git \
+        "$(Agent.BuildDirectory)/bc-runtime"
+      ls "$(Agent.BuildDirectory)/bc-runtime"
+    displayName: 'Clone Business Central runtime'
 
-  - bash: bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" init
+  - bash: bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" init
     displayName: 'Initialize timing'
 
   - bash: |
       set -e
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" begin DOWNLOAD "Download BC artifacts + pull docker images"
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" begin DOWNLOAD "Download BC artifacts + pull docker images"
       mkdir -p "$(Pipeline.Workspace)/artifact-cache/$(BC_VERSION)"
       (
-        "$(Agent.BuildDirectory)/bc-linux/scripts/download-artifacts.sh" \
+        "$(Agent.BuildDirectory)/bc-runtime/scripts/download-artifacts.sh" \
           "$(BC_TYPE)" "$(BC_VERSION)" "$(BC_COUNTRY)" \
           "$(Pipeline.Workspace)/artifact-cache/$(BC_VERSION)"
       ) &
       ARTIFACT_PID=$!
       (
-        cd "$(Agent.BuildDirectory)/bc-linux"
+        cd "$(Agent.BuildDirectory)/bc-runtime"
         for attempt in 1 2 3 4 5; do
           if docker compose pull --quiet; then break; fi
           echo "docker compose pull failed (attempt $attempt/5); retrying in 15s..."
@@ -146,25 +149,25 @@ steps:
       PULL_PID=$!
       wait $ARTIFACT_PID || { echo "artifact download failed"; exit 1; }
       wait $PULL_PID     || { echo "docker pull failed"; exit 1; }
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" end DOWNLOAD
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" end DOWNLOAD
     displayName: 'Download BC artifacts + pull docker images (parallel)'
 
   - bash: |
       set -e
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" begin RESOLVE "Resolve apps to keep"
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" begin RESOLVE "Resolve apps to keep"
       ARGS=""
       cd "$(Pipeline.Workspace)/project"
       for d in $(APP_DIRS) $(TEST_APP_DIRS); do
         [ -z "$d" ] && continue
         [ -f "$d/app.json" ] && ARGS="$ARGS --app-json $d/app.json"
       done
-      KEEP_IDS=$(python3 "$(Agent.BuildDirectory)/bc-linux/scripts/resolve-keep-app-ids.py" \
+      KEEP_IDS=$(python3 "$(Agent.BuildDirectory)/bc-runtime/scripts/resolve-keep-app-ids.py" \
         $ARGS \
         --artifact-dir "$(Pipeline.Workspace)/artifact-cache/$(BC_VERSION)")
       echo "Resolved keep set: $KEEP_IDS"
       echo "##vso[task.setvariable variable=BC_CLEAR_ALL_APPS]selective"
       echo "##vso[task.setvariable variable=BC_KEEP_APP_IDS]$KEEP_IDS"
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" end RESOLVE
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" end RESOLVE
     displayName: 'Resolve apps to keep in BC database'
 
   # Optional: stage an ISV/developer license. Without this step BC boots
@@ -190,8 +193,8 @@ steps:
 
   - bash: |
       set -e
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" begin BC_BOOT "BC startup (background → wait for healthy)"
-      cd "$(Agent.BuildDirectory)/bc-linux"
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" begin BC_BOOT "BC startup (background → wait for healthy)"
+      cd "$(Agent.BuildDirectory)/bc-runtime"
       export BC_ARTIFACTS_DIR="$(Pipeline.Workspace)/artifact-cache/$(BC_VERSION)"
       export BC_VERSION="$(BC_VERSION)"
       export BC_COUNTRY="$(BC_COUNTRY)"
@@ -205,7 +208,7 @@ steps:
       export BC_LICENSE_FILE="${BC_LICENSE_FILE:-}"
       docker compose up -d
       echo "BC container started in background — continuing with other work."
-    displayName: 'Start BC on Linux (background)'
+    displayName: 'Start Business Central container (background)'
 
   - task: UseDotNet@2
     displayName: 'Install .NET 8 SDK'
@@ -214,7 +217,7 @@ steps:
       version: '8.0.x'
 
   - bash: |
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" begin AL_INSTALL "Install AL compiler"
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" begin AL_INSTALL "Install AL compiler"
       TOOL="$(AL_TOOL_VERSION)"
       BC_MAJOR=$(echo "$(BC_VERSION)" | cut -d. -f1)
       if [ -z "$TOOL" ]; then
@@ -232,21 +235,29 @@ steps:
         Microsoft.Dynamics.BusinessCentral.Development.Tools.Linux \
         --version "$TOOL" 2>/dev/null || true
       echo "##vso[task.prependpath]$HOME/.dotnet/tools"
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" end AL_INSTALL
-    displayName: 'Install Linux AL compiler'
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" end AL_INSTALL
+    displayName: 'Install AL compiler'
 
   - bash: |
       set -e
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" begin SYMBOLS "Stage symbols"
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" begin SYMBOLS "Stage symbols"
       mkdir -p "$(Pipeline.Workspace)/symbols"
-      ART="$(Pipeline.Workspace)/artifact-cache/$(BC_VERSION)"
-      find "$ART/platform/ModernDev" -name "System.app" -exec cp {} "$(Pipeline.Workspace)/symbols/" \; 2>/dev/null || true
-      find "$ART/app/Extensions" -name "*.app" -exec cp {} "$(Pipeline.Workspace)/symbols/" \; 2>/dev/null || true
-      find "$ART/platform" -path "*testframework*" -name "*.app" -exec cp {} "$(Pipeline.Workspace)/symbols/" \; 2>/dev/null || true
-      find "$ART/app/Applications" -name "*Test Library*.app" -exec cp {} "$(Pipeline.Workspace)/symbols/" \; 2>/dev/null || true
-      find "$ART/app/Applications" -name "*Tests-TestLibraries*.app" -exec cp {} "$(Pipeline.Workspace)/symbols/" \; 2>/dev/null || true
+      # Manifest-driven resolver: index every artifact .app by its
+      # declared id, then stage the transitive dependency closure for
+      # the consumer app.json files. This stays stable when Microsoft
+      # moves apps between artifact folders across BC versions.
+      ARGS=""
+      for d in $(APP_DIRS) $(TEST_APP_DIRS); do
+        [ -z "$d" ] && continue
+        [ -f "$(Pipeline.Workspace)/project/$d/app.json" ] && ARGS="$ARGS --app-json $(Pipeline.Workspace)/project/$d/app.json"
+      done
+      python3 "$(Agent.BuildDirectory)/bc-runtime/scripts/stage-symbols.py" \
+        $ARGS \
+        --artifact-dir "$(Pipeline.Workspace)/artifact-cache/$(BC_VERSION)" \
+        --out-dir "$(Pipeline.Workspace)/symbols" \
+        || true
       echo "Staged $(ls $(Pipeline.Workspace)/symbols/*.app 2>/dev/null | wc -l) symbol files"
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" end SYMBOLS
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" end SYMBOLS
     displayName: 'Stage symbols from BC artifacts'
 
   - bash: |
@@ -283,7 +294,7 @@ steps:
 
   - bash: |
       set -e
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" begin COMPILE "Compile AL apps"
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" begin COMPILE "Compile AL apps"
       SYMBOLS="$(Pipeline.Workspace)/symbols"
       BUILD_DIR="$(Pipeline.Workspace)/build"
       mkdir -p "$BUILD_DIR"
@@ -315,7 +326,7 @@ steps:
       ANALYZER_FLAGS=()
       if [ ${#HELPER_ARGS[@]} -gt 0 ]; then
         HELPER_OUT=$(mktemp)
-        if ! python3 "$(Agent.BuildDirectory)/bc-linux/scripts/resolve-analyzers.py" \
+        if ! python3 "$(Agent.BuildDirectory)/bc-runtime/scripts/resolve-analyzers.py" \
             --project-root "$(Pipeline.Workspace)/project" \
             "${HELPER_ARGS[@]}" > "$HELPER_OUT"; then
           echo "ERROR: resolve-analyzers.py failed — check stderr above" >&2
@@ -386,59 +397,41 @@ steps:
           compile_dir "$d"
         fi
       done
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" end COMPILE
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" end COMPILE
     displayName: 'Compile AL apps (no publish yet)'
 
   - bash: |
       set -e
-      cd "$(Agent.BuildDirectory)/bc-linux"
-      for i in $(seq 1 360); do
-        STATUS=$(docker inspect --format='{{.State.Health.Status}}' \
-          "$(docker compose ps -q bc)" 2>/dev/null || echo unknown)
-        case "$STATUS" in
-          healthy)   echo "BC ready after $((i*5))s"; break ;;
-          unhealthy) docker compose logs bc | tail -80; exit 1 ;;
-        esac
-        sleep 5
-      done
-      [ "$STATUS" = "healthy" ] || { docker compose logs bc | tail -100; exit 1; }
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" end BC_BOOT
+      cd "$(Agent.BuildDirectory)/bc-runtime"
+      ./scripts/wait-for-bc-healthy.sh 30
+      ./scripts/verify-network-surface.sh
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" end BC_BOOT
     displayName: 'Wait for BC healthy'
 
   - bash: |
       set -e
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" begin PUBLISH "Publish AL apps"
-      AUTH="BCRUNNER:Admin123!"
-      DEV="http://localhost:7049"
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" begin PUBLISH "Publish AL apps"
+      AUTH="$(BC_USERNAME):$(BC_PASSWORD)"
+      DEV="http://localhost:7049/BC/dev"
       BUILD_DIR="$(Pipeline.Workspace)/build"
-      publish_app() {
-        local app="$1"
-        [ -f "$app" ] || { echo "missing: $app"; exit 1; }
-        echo ">>> Publishing $app"
-        local code
-        code=$(curl -s -o /tmp/pub.out -w "%{http_code}" --max-time 180 \
-          -u "$AUTH" -X POST \
-          -F "file=@${app};type=application/octet-stream" \
-          "$DEV/apps?SchemaUpdateMode=forcesync")
-        cat /tmp/pub.out; echo
-        [ "$code" = "200" ] || [ "$code" = "422" ] || { echo "publish failed: $code"; exit 1; }
-      }
+      # shellcheck disable=SC1091
+      . "$(Agent.BuildDirectory)/bc-runtime/scripts/publish-app.sh"
       PUBLISHED_COUNT=0
       for d in $(APP_DIRS) $(TEST_APP_DIRS); do
         [ -z "$d" ] && continue
-        publish_app "$BUILD_DIR/$(basename "$d").app"
+        bc_publish_app "$BUILD_DIR/$(basename "$d").app" "$DEV" "$AUTH" || exit 1
         PUBLISHED_COUNT=$((PUBLISHED_COUNT + 1))
       done
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" count apps_published "$PUBLISHED_COUNT"
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" count apps_published "$PUBLISHED_COUNT"
       COMPILED_COUNT=$(ls "$BUILD_DIR"/*.app 2>/dev/null | wc -l)
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" count apps_compiled "$COMPILED_COUNT"
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" end PUBLISH
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" count apps_compiled "$COMPILED_COUNT"
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" end PUBLISH
     displayName: 'Publish AL apps to BC'
 
   - bash: |
       set -e
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" begin TESTS "Run AL tests"
-      cd "$(Agent.BuildDirectory)/bc-linux"
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" begin TESTS "Run AL tests"
+      cd "$(Agent.BuildDirectory)/bc-runtime"
       TESTS_TOTAL=0; TESTS_PASSED=0; TESTS_FAILED=0; CODEUNITS_TOTAL=0
       for d in $(TEST_APP_DIRS); do
         [ -z "$d" ] && continue
@@ -449,13 +442,20 @@ steps:
         tmplog=$(mktemp)
         ./scripts/run-tests.sh \
           --app "$app" \
+          --auth "$(BC_USERNAME):$(BC_PASSWORD)" \
           --codeunit-range "$(CODEUNIT_RANGE)" \
           --timeout 30 2>&1 | tee "$tmplog"
-        line=$(grep -oE '[0-9]+ total, [0-9]+ passed, [0-9]+ failed' "$tmplog" | tail -1 || true)
+        line=$(grep -oE 'total=[0-9]+ passed=[0-9]+ failed=[0-9]+|[0-9]+ total, [0-9]+ passed, [0-9]+ failed' "$tmplog" | tail -1 || true)
         if [ -n "$line" ]; then
-          t=$(echo "$line" | grep -oE '^[0-9]+')
-          p=$(echo "$line" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+')
-          f=$(echo "$line" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+')
+          if [[ "$line" == total=* ]]; then
+            t=$(echo "$line" | sed -n 's/.*total=\([0-9][0-9]*\).*/\1/p')
+            p=$(echo "$line" | sed -n 's/.*passed=\([0-9][0-9]*\).*/\1/p')
+            f=$(echo "$line" | sed -n 's/.*failed=\([0-9][0-9]*\).*/\1/p')
+          else
+            t=$(echo "$line" | grep -oE '^[0-9]+')
+            p=$(echo "$line" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+')
+            f=$(echo "$line" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+')
+          fi
           TESTS_TOTAL=$((TESTS_TOTAL + ${t:-0}))
           TESTS_PASSED=$((TESTS_PASSED + ${p:-0}))
           TESTS_FAILED=$((TESTS_FAILED + ${f:-0}))
@@ -467,11 +467,11 @@ steps:
         fi
         rm -f "$tmplog"
       done
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" count tests_total    "$TESTS_TOTAL"
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" count tests_passed   "$TESTS_PASSED"
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" count tests_failed   "$TESTS_FAILED"
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" count codeunits_total "$CODEUNITS_TOTAL"
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" end TESTS
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" count tests_total    "$TESTS_TOTAL"
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" count tests_passed   "$TESTS_PASSED"
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" count tests_failed   "$TESTS_FAILED"
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" count codeunits_total "$CODEUNITS_TOTAL"
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" end TESTS
     displayName: 'Run AL tests'
 
   - bash: |
@@ -480,12 +480,12 @@ steps:
       [ "$AGENT_JOBSTATUS" = "Cancelled" ] && JOB_STATUS=cancelled
       export JOB_STATUS
       export BC_TELEMETRY_OPT_OUT="${BC_TELEMETRY_OPT_OUT:-false}"
-      bash "$(Agent.BuildDirectory)/bc-linux/scripts/workflow-summary.sh" emit
+      bash "$(Agent.BuildDirectory)/bc-runtime/scripts/workflow-summary.sh" emit
     displayName: 'Workflow timing summary + telemetry'
     condition: always()
 
   - bash: |
-      cd "$(Agent.BuildDirectory)/bc-linux"
+      cd "$(Agent.BuildDirectory)/bc-runtime"
       docker compose logs bc | tail -200
     displayName: 'BC logs (on failure)'
     condition: failed()

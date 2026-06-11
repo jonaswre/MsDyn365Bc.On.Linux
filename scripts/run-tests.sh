@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# run-tests.sh — Run AL tests on a BC Linux container
+# run-tests.sh — Run AL tests through a Business Central network endpoint
 #
-# Hybrid execution: OData for setup + WebSocket for execution + OData for results.
-# The WebSocket path creates a proper client session (serviceConnection) required
-# for TestPage support. OData handles suite population and result reading.
+# Network execution: OData/API for setup, execution, and result reading.
+# This mirrors the public Business Central container surface: callers connect
+# over HTTP endpoints and do not need shell access to the container.
 #
 # Usage:
 #   ./scripts/run-tests.sh [options]
@@ -22,22 +22,27 @@
 #                                Azure DevOps "Publish Test Results" task, and
 #                                AL-Go's AnalyzeTests post-step. Default off.
 #   --company <name>           Company name (default: auto-detect)
-#   --base-url <url>           BC base URL (default: http://localhost:7048/BC)
-#   --dev-url <url>            BC Dev endpoint (default: http://localhost:7049/BC/dev)
-#   --auth <user:pass>         Authentication (default: BCRUNNER:Admin123!)
+#   --tenant <name>            BC tenant (default: default)
+#   --suite <name>             Test suite name (default: DEFAULT)
+#   --base-url <url>           BC base URL (default: http://localhost:7046/BC)
+#   --dev-url <url>            BC Dev endpoint (default: derived from --base-url)
+#   --auth <user:pass>         Authentication (default: $BC_USERNAME:$BC_PASSWORD or admin:admin)
 #   --timeout <minutes>        Overall timeout (default: 30)
 #   --test-runner-app <path>   TestRunnerExtension .app (auto-detected)
 
 set -uo pipefail
 
 # === Configuration & CLI Parsing ===
-BASE_URL="http://localhost:7048/BC"
-DEV_URL="http://localhost:7049/BC/dev"
-AUTH="BCRUNNER:Admin123!"
+BASE_URL="http://localhost:7046/BC"
+DEV_URL=""
+DEV_URL_SET=false
+AUTH="${BC_USERNAME:-admin}:${BC_PASSWORD:-admin}"
 COMPANY=""
+TENANT="${BC_TENANT:-default}"
 CODEUNIT_RANGE=""
 APP_FILE=""
 TIMEOUT_MIN=30
+SUITE_NAME="DEFAULT"
 DISABLED_TESTS_DIR=""
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -58,9 +63,11 @@ Options:
                                "50000..50100,130450,200000..210000" mixed
   --junit-output <path>      Write per-test results as JUnit XML to <path>
   --company <name>           Company name (default: auto-detect)
-  --base-url <url>           BC OData base URL (default: http://localhost:7048/BC)
-  --dev-url <url>            BC Dev endpoint (default: http://localhost:7049/BC/dev)
-  --auth <user:pass>         Authentication (default: BCRUNNER:Admin123!)
+  --tenant <name>            BC tenant (default: default)
+  --suite <name>             Test suite name (default: DEFAULT)
+  --base-url <url>           BC service base URL (default: http://localhost:7046/BC)
+  --dev-url <url>            BC Dev endpoint (default: derived from --base-url)
+  --auth <user:pass>         Authentication (default: \$BC_USERNAME:\$BC_PASSWORD or admin:admin)
   --timeout <minutes>        Overall timeout (default: 30)
   --test-runner-app <path>   TestRunnerExtension .app (auto-detected)
   --disabled-tests <dir>     Directory with DisabledTests JSON files
@@ -71,7 +78,7 @@ Examples:
   ./scripts/run-tests.sh --app MyTestApp.app --codeunit-range 50000..50100
 
   # Remote BC (e.g. from a devcontainer / Codespace)
-  ./scripts/run-tests.sh --base-url http://172.17.0.1:7048/BC --app MyTestApp.app
+  ./scripts/run-tests.sh --base-url http://172.17.0.1:7046/BC --app MyTestApp.app
 HELPEOF
     exit 0
 }
@@ -82,14 +89,16 @@ while [[ $# -gt 0 ]]; do
         --app) APP_FILE="$2"; shift 2;;
         --codeunit-range) CODEUNIT_RANGE="$2"; shift 2;;
         --company) COMPANY="$2"; shift 2;;
+        --tenant) TENANT="$2"; shift 2;;
+        --suite|--suite-name) SUITE_NAME="$2"; shift 2;;
         --base-url) BASE_URL="$2"; shift 2;;
-        --dev-url) DEV_URL="$2"; shift 2;;
+        --dev-url) DEV_URL="$2"; DEV_URL_SET=true; shift 2;;
         --auth) AUTH="$2"; shift 2;;
         --timeout) TIMEOUT_MIN="$2"; shift 2;;
         --test-runner-app) TEST_RUNNER_APP="$2"; shift 2;;
         --disabled-tests) DISABLED_TESTS_DIR="$2"; shift 2;;
         --junit-output) JUNIT_OUTPUT="$2"; shift 2;;
-        --host|--test-runner|--suite-name|--codeunit-timeout|--extension-id|--sql-password) shift 2;;
+        --host|--test-runner|--codeunit-timeout|--extension-id|--sql-password) shift 2;;
         *) echo "Unknown option: $1 (try --help)"; exit 1;;
     esac
 done
@@ -99,17 +108,105 @@ echo "=== BC Test Runner ==="
 # --- Helper ---
 py3() { env -u PYTHONHOME -u PYTHONPATH python3 "$@"; }
 
-# Derive scheme://host (no port, no path) and instance path from BASE_URL
-# so fallback URLs on other ports use the same host instead of hardcoded localhost.
-_URL_ORIGIN=$(echo "$BASE_URL" | sed -E 's|(https?://[^:/]+).*|\1|')
-_BC_PATH=$(echo "$BASE_URL" | sed -E 's|https?://[^/]+(/.*)$|\1|')
-[ -z "$_URL_ORIGIN" ] && _URL_ORIGIN="http://localhost"
-[ -z "$_BC_PATH" ] && _BC_PATH="/BC"
-_API_FALLBACK="${_URL_ORIGIN}:7052${_BC_PATH}"
+derive_api_base_candidates() {
+    py3 - "$BASE_URL" <<'PYEOF'
+import sys
+from urllib.parse import urlsplit, urlunsplit
+
+raw = sys.argv[1].rstrip("/")
+parts = urlsplit(raw)
+if parts.scheme not in ("http", "https") or not parts.hostname:
+    print(raw)
+    raise SystemExit(0)
+
+path = parts.path
+if path.lower().endswith("/client"):
+    path = path[:-7] or "/"
+
+def is_standard_bc_base(path):
+    normalized = path.rstrip("/").lower()
+    return normalized == "/bc"
+
+def is_known_bc_service_port(port):
+    return ((7000 <= port < 8000) or port >= 10000) and port % 100 in (45, 46, 47, 48, 49, 52, 85, 86)
+
+def add_port(ports, port):
+    if port not in ports:
+        ports.append(port)
+
+ports = []
+if parts.port is None:
+    if is_standard_bc_base(path):
+        add_port(ports, 7052)
+        add_port(ports, 7048)
+    else:
+        add_port(ports, None)
+elif is_known_bc_service_port(parts.port):
+    add_port(ports, parts.port - (parts.port % 100) + 52)
+    add_port(ports, parts.port - (parts.port % 100) + 48)
+else:
+    add_port(ports, parts.port)
+
+seen = set()
+for port in ports:
+    host = parts.hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    netloc = host if port is None else f"{host}:{port}"
+    candidate = urlunsplit((parts.scheme, netloc, path, "", "")).rstrip("/")
+    if candidate not in seen:
+        seen.add(candidate)
+        print(candidate)
+PYEOF
+}
+
+derive_dev_url() {
+    py3 - "$BASE_URL" <<'PYEOF'
+import sys
+from urllib.parse import urlsplit, urlunsplit
+
+raw = sys.argv[1].rstrip("/")
+parts = urlsplit(raw)
+if parts.scheme not in ("http", "https") or not parts.hostname:
+    print(raw)
+    raise SystemExit(0)
+
+path = parts.path.rstrip("/") or "/"
+lower_path = path.lower()
+if lower_path.endswith("/client"):
+    path = path[:-7].rstrip("/") or "/"
+    lower_path = path.lower()
+
+if not lower_path.endswith("/dev"):
+    path = f"{path}/dev" if path != "/" else "/dev"
+
+port = parts.port
+if port is None:
+    service_tier_path = path[:-4].rstrip("/") or "/" if path.lower().endswith("/dev") else path
+    if service_tier_path.rstrip("/").lower() == "/bc":
+        port = 7049
+elif ((7000 <= port < 8000) or port >= 10000) and port % 100 in (45, 46, 47, 48, 49, 52, 85, 86):
+    port = port - (port % 100) + 49
+
+host = parts.hostname
+if ":" in host and not host.startswith("["):
+    host = f"[{host}]"
+netloc = host if port is None else f"{host}:{port}"
+print(urlunsplit((parts.scheme, netloc, path, "", "")).rstrip("/"))
+PYEOF
+}
+
+if [ "$DEV_URL_SET" != "true" ]; then
+    DEV_URL="$(derive_dev_url)"
+fi
 
 # --- Find TestRunnerExtension .app ---
 if [ -z "$TEST_RUNNER_APP" ]; then
-    TEST_RUNNER_APP="$REPO_DIR/extensions/TestRunnerExtension/TestRunnerExtension.app"
+    if [ -f /bc/testrunner/TestRunner.app ]; then
+        TEST_RUNNER_APP="/bc/testrunner/TestRunner.app"
+    else
+        TEST_RUNNER_APP="$REPO_DIR/extensions/TestRunnerExtension/TestRunnerExtension.app"
+    fi
 fi
 if [ ! -f "$TEST_RUNNER_APP" ]; then
     echo "ERROR: TestRunnerExtension .app not found at $TEST_RUNNER_APP"
@@ -118,12 +215,21 @@ fi
 
 # === Company Auto-Detection ===
 COMPANIES_JSON=""
-for url in "${BASE_URL}/api/v2.0/companies" "${_API_FALLBACK}/api/v2.0/companies"; do
-    COMPANIES_JSON=$(curl -sf --max-time 10 -u "$AUTH" "$url" 2>/dev/null || true)
+while IFS= read -r candidate; do
+    [ -z "$candidate" ] && continue
+    COMPANIES_JSON=$(curl -sf --max-time 10 -u "$AUTH" "${candidate}/api/v2.0/companies?tenant=${TENANT}" 2>/dev/null || true)
     [ -n "$COMPANIES_JSON" ] && break
-done
+done <<EOF
+$(derive_api_base_candidates)
+EOF
 if [ -z "$COMPANIES_JSON" ]; then
-    COMPANIES_JSON=$(curl -sf --max-time 10 -u "$AUTH" "${BASE_URL}/ODataV4/Company" 2>/dev/null || true)
+    while IFS= read -r candidate; do
+        [ -z "$candidate" ] && continue
+        COMPANIES_JSON=$(curl -sf --max-time 10 -u "$AUTH" "${candidate}/ODataV4/Company?tenant=${TENANT}" 2>/dev/null || true)
+        [ -n "$COMPANIES_JSON" ] && break
+    done <<EOF
+$(derive_api_base_candidates)
+EOF
 fi
 if [ -z "$COMPANIES_JSON" ]; then
     echo "ERROR: Cannot reach BC. Is it running?"
@@ -135,11 +241,14 @@ COMPANY_ID=$(echo "$COMPANIES_JSON" | py3 -c "import sys,json; c=json.load(sys.s
 [ -z "$COMPANY" ] && COMPANY="${COMPANY_AUTO:-CRONUS International Ltd.}"
 
 if [ -z "$COMPANY_ID" ]; then
-    for url in "${BASE_URL}/api/v2.0/companies" "${_API_FALLBACK}/api/v2.0/companies"; do
-        COMPANY_ID=$(curl -sf --max-time 10 -u "$AUTH" "$url" 2>/dev/null \
+    while IFS= read -r candidate; do
+        [ -z "$candidate" ] && continue
+        COMPANY_ID=$(curl -sf --max-time 10 -u "$AUTH" "${candidate}/api/v2.0/companies?tenant=${TENANT}" 2>/dev/null \
             | py3 -c "import sys,json; [print(c.get('id',c.get('SystemId',''))) for c in json.load(sys.stdin)['value'] if c.get('name',c.get('Name',''))==sys.argv[1]]" "$COMPANY" 2>/dev/null || true)
         [ -n "$COMPANY_ID" ] && break
-    done
+    done <<EOF
+$(derive_api_base_candidates)
+EOF
 fi
 if [ -z "$COMPANY_ID" ]; then
     echo "ERROR: Could not get company ID for '$COMPANY'"
@@ -149,18 +258,18 @@ echo "Company: $COMPANY ($COMPANY_ID)"
 
 # === Determine API Base URL ===
 API_PORT_BASE=""
-for base in "${BASE_URL}" "$_API_FALLBACK"; do
+while IFS= read -r candidate; do
+    [ -z "$candidate" ] && continue
     HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -u "$AUTH" \
-        "${base}/api/custom/automation/v1.0/companies(${COMPANY_ID})/codeunitRunRequests" 2>/dev/null || echo "000")
-    [ "$HTTP" = "200" ] && API_PORT_BASE="$base" && break
-done
-if [ -z "$API_PORT_BASE" ]; then
-    for base in "${BASE_URL}" "$_API_FALLBACK"; do
-        T=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -u "$AUTH" "${base}/api/v2.0/companies" 2>/dev/null || echo "000")
-        [ "$T" = "200" ] && API_PORT_BASE="$base" && break
-    done
-    [ -z "$API_PORT_BASE" ] && API_PORT_BASE="$BASE_URL"
-fi
+        "${candidate}/api/custom/automation/v1.0/companies(${COMPANY_ID})/codeunitRunRequests" 2>/dev/null || echo "000")
+    if [ "$HTTP" = "200" ]; then
+        API_PORT_BASE="$candidate"
+        break
+    fi
+done <<EOF
+$(derive_api_base_candidates)
+EOF
+[ -z "$API_PORT_BASE" ] && API_PORT_BASE="$BASE_URL"
 API_BASE="${API_PORT_BASE}/api/custom/automation/v1.0/companies(${COMPANY_ID})"
 
 # Source the shared publish helper. Both this script and downstream
@@ -296,12 +405,16 @@ if [ -z "$CODEUNIT_IDS" ]; then
 fi
 echo "Test codeunits: $CODEUNIT_IDS"
 
-# === Setup Test Suite via OData ===
+# === Setup Test Suite via Network API ===
 echo -n "Setting up test suite... "
 CREATE_BODY=$(mktemp)
+CREATE_JSON="{\"CodeunitIds\": \"$CODEUNIT_IDS\"}"
+if [ "$SUITE_NAME" != "DEFAULT" ]; then
+    CREATE_JSON="{\"CodeunitIds\": \"$CODEUNIT_IDS\", \"SuiteName\": \"$SUITE_NAME\"}"
+fi
 CREATE_HTTP=$(curl -s -o "$CREATE_BODY" -w "%{http_code}" --max-time 15 -u "$AUTH" -X POST \
     -H "Content-Type: application/json" \
-    -d "{\"CodeunitIds\": \"$CODEUNIT_IDS\"}" \
+    -d "$CREATE_JSON" \
     "${API_BASE}/codeunitRunRequests" 2>/dev/null)
 REQUEST_ID=$(py3 -c "import sys,json; print(json.load(sys.stdin)['Id'])" < "$CREATE_BODY" 2>/dev/null || true)
 
@@ -310,7 +423,7 @@ if [ -z "$REQUEST_ID" ]; then
     echo ""
     echo "ERROR: POST ${API_BASE}/codeunitRunRequests"
     echo "       HTTP code: $CREATE_HTTP"
-    echo "       Request body: {\"CodeunitIds\": \"$CODEUNIT_IDS\"}"
+    echo "       Request body: $CREATE_JSON"
     echo "       Response body:"
     sed 's/^/         /' "$CREATE_BODY"
     echo ""
@@ -318,7 +431,7 @@ if [ -z "$REQUEST_ID" ]; then
     echo "         - The custom TestRunner extension (page 99902 'Codeunit Run Requests')"
     echo "           is not installed for the default tenant. Check 'Test Runner Extension'"
     echo "           in entrypoint.sh's BC startup logs."
-    echo "         - The OData endpoint we're hitting (\$API_PORT_BASE) is wrong for"
+    echo "         - The API endpoint we're hitting (\$API_PORT_BASE) is wrong for"
     echo "           POST in this BC version (the auto-detection picked an endpoint that"
     echo "           accepts GET on this path but not POST)."
     echo "         - The request body schema doesn't match the page's bound action."
@@ -343,8 +456,8 @@ fi
 # run-tests.sh is invoked back-to-back from a fast inner loop like
 # bc-copilot-blueprint's iterate.sh.
 #
-# Diagnostic signature of the race: TestRunner.dll runs and prints
-# "0 total, 0 passed, 0 failed" in 0 seconds, then exits 1.
+    # Diagnostic signature of the race: the network runner reports
+    # "total=0 passed=0 failed=0 skipped=0", then exits 1.
 #
 # Fix: query the testResults endpoint (which exposes Test Method Line
 # rows from the suite). If empty, re-call setupSuite up to a handful of
@@ -361,7 +474,7 @@ verify_suite_populated() {
     # environments where there is no accidental slack between publish
     # and the first setupSuite call.
     #
-    # Stricter than "any row exists in DEFAULT": only counts FUNCTION-type
+    # Stricter than "any row exists in the suite": only counts FUNCTION-type
     # rows that mention OUR expected codeunit IDs. setupSuite inserts a
     # placeholder Codeunit-type row even when the test app's metadata
     # isn't loaded (so the codeunit registration exists but with zero
@@ -371,7 +484,7 @@ verify_suite_populated() {
     local attempt
     for attempt in $(seq 1 20); do
         VERIFY_LAST_RESPONSE=$(curl -sf --max-time 10 -u "$AUTH" \
-            "${API_BASE}/testResults?\$filter=testSuite%20eq%20%27DEFAULT%27%20and%20lineType%20eq%20%27Function%27&\$top=500" 2>/dev/null || true)
+            "${API_BASE}/testResults?\$filter=testSuite%20eq%20%27${SUITE_NAME}%27%20and%20lineType%20eq%20%27Function%27&\$top=500" 2>/dev/null || true)
         if [ -n "$VERIFY_LAST_RESPONSE" ]; then
             VERIFY_LAST_DETAIL=$(echo "$VERIFY_LAST_RESPONSE" | EXPECTED="$expected_ids" py3 -c "
 import os, sys, json
@@ -408,7 +521,7 @@ sys.exit(0 if matched else 1)
 echo ""   # newline so per-attempt logs are readable
 if ! verify_suite_populated "$REQUEST_ID" "$CODEUNIT_IDS"; then
     echo ""
-    echo "ERROR: setupSuite returned 200 but the DEFAULT test suite never"
+    echo "ERROR: setupSuite returned 200 but the ${SUITE_NAME} test suite never"
     echo "       contained any of the expected codeunits after 20 retries (~40s)."
     echo ""
     echo "       Expected codeunit IDs: $CODEUNIT_IDS"
@@ -416,7 +529,7 @@ if ! verify_suite_populated "$REQUEST_ID" "$CODEUNIT_IDS"; then
     echo "       Last verify detail:    $VERIFY_LAST_DETAIL"
     echo ""
     echo "       Last raw testResults response (truncated to 800 chars):"
-    echo "         URL: ${API_BASE}/testResults?\$filter=testSuite%20eq%20'DEFAULT'&\$top=500"
+    echo "         URL: ${API_BASE}/testResults?\$filter=testSuite%20eq%20'${SUITE_NAME}'&\$top=500"
     echo "         Body: ${VERIFY_LAST_RESPONSE:0:800}"
     echo ""
     echo "       Possible causes:"
@@ -428,7 +541,6 @@ if ! verify_suite_populated "$REQUEST_ID" "$CODEUNIT_IDS"; then
     echo ""
     echo "       Cross-check installed extensions:"
     echo "         curl -u $AUTH '${BASE_URL}/api/v2.0/extensionDeployments'"
-    echo "         curl -u $AUTH '${_API_FALLBACK}/api/v2.0/extensionDeployments'"
     exit 1
 fi
 echo "Test suite populated."
@@ -474,9 +586,13 @@ for c in chunks:
         DISABLED_COUNT=0
         while IFS= read -r CHUNK; do
             # Create a request and call DisableTests
+            DIS_JSON="{\"CodeunitIds\": \"$CHUNK\"}"
+            if [ "$SUITE_NAME" != "DEFAULT" ]; then
+                DIS_JSON="{\"CodeunitIds\": \"$CHUNK\", \"SuiteName\": \"$SUITE_NAME\"}"
+            fi
             DIS_RESP=$(curl -s --max-time 15 -u "$AUTH" -X POST \
                 -H "Content-Type: application/json" \
-                -d "{\"CodeunitIds\": \"$CHUNK\"}" \
+                -d "$DIS_JSON" \
                 "${API_BASE}/codeunitRunRequests" 2>/dev/null)
             DIS_ID=$(echo "$DIS_RESP" | py3 -c "import sys,json; print(json.load(sys.stdin)['Id'])" 2>/dev/null || true)
             if [ -n "$DIS_ID" ]; then
@@ -489,167 +605,117 @@ for c in chunks:
     fi
 fi
 
-# === Execute Tests via WebSocket ===
+# === Execute Tests via Network API ===
 echo ""
 echo "=== Running Tests ==="
 
-# Extract host from BASE_URL for WebSocket and API connections.
-# Reuses _URL_ORIGIN (scheme://host) parsed earlier.
-BC_HOST=$(echo "$_URL_ORIGIN" | sed 's|http[s]*://||')
-[ -z "$BC_HOST" ] && BC_HOST="localhost"
-WS_HOST="${BC_HOST}:7085"
-ODATA_HOST="${BC_HOST}:7052"
-
-# Parse auth components
-AUTH_USER="${AUTH%%:*}"
-AUTH_PASS="${AUTH#*:}"
-
-# Calculate max iterations: each codeunit needs ~2 iterations (run + reconnect after isolation)
 IFS=',' read -ra CU_ARRAY <<< "$CODEUNIT_IDS"
 NUM_CODEUNITS=${#CU_ARRAY[@]}
-MAX_ITER=$(( NUM_CODEUNITS * 3 + 20 ))
-echo "Executing $NUM_CODEUNITS codeunits via WebSocket (max $MAX_ITER iterations)..."
+echo "Executing $NUM_CODEUNITS codeunit(s) via OData/API..."
 
-# Note: do NOT pass --codeunit-filter here — the suite is already set up via OData.
-# Passing it would re-trigger SetupSuite which clears test results.
-# We pass --num-codeunits for correct progress display only.
-#
-# TestRunner execution strategy:
-#   1. If a bc-linux docker compose stack is running, run TestRunner INSIDE the
-#      bc container via `docker compose exec`. This requires NO host-side .NET 8
-#      SDK because the container already has the runtime and the pre-built
-#      TestRunner.dll at /bc/tools/TestRunner/. Works regardless of whether
-#      BC_HOST is localhost, 127.0.0.1, or a docker bridge IP like 172.17.0.1
-#      (e.g. when called from a devcontainer / Codespace).
-#   2. Otherwise, try a pre-built TestRunner.dll on the host (no SDK needed).
-#   3. Last resort: `dotnet run` against the source project (needs .NET 8 SDK).
-USE_DOCKER_EXEC=false
-HOST_PREBUILT=""
-DOCKER_BC_CONTAINER=""
-if command -v docker >/dev/null 2>&1; then
-    # Try to find a running bc container in the bc-linux compose project.
-    DOCKER_BC_CONTAINER=$(cd "$REPO_DIR" 2>/dev/null && docker compose ps -q bc 2>/dev/null | head -1)
-    if [ -n "$DOCKER_BC_CONTAINER" ]; then
-        # Verify TestRunner.dll is bundled in the image. Older bc-runner
-        # images (built before this change) don't have it; in that case
-        # we fall through to the host-side paths.
-        if (cd "$REPO_DIR" 2>/dev/null && docker compose exec -T bc test -f /bc/tools/TestRunner/TestRunner.dll 2>/dev/null); then
-            USE_DOCKER_EXEC=true
-        else
-            echo "[run-tests] bc-runner image does not bundle TestRunner.dll — trying host-side paths."
-            echo "[run-tests]   (rebuild with 'docker compose build bc' to drop the host SDK requirement.)"
-        fi
-    fi
+RUN_BODY=$(mktemp)
+RUN_HTTP=$(curl -s -o "$RUN_BODY" -w "%{http_code}" --max-time "$((TIMEOUT_MIN * 60))" -u "$AUTH" -X POST \
+    "${API_BASE}/codeunitRunRequests(${REQUEST_ID})/Microsoft.NAV.runCodeunit" 2>/dev/null)
+RUN_VALUE=$(py3 -c "import sys,json; print(str(json.load(sys.stdin).get('value','')).lower())" < "$RUN_BODY" 2>/dev/null || true)
+if [ "$RUN_HTTP" != "200" ] && [ "$RUN_HTTP" != "204" ]; then
+    echo "ERROR: runCodeunit failed (HTTP $RUN_HTTP)"
+    sed 's/^/  /' "$RUN_BODY"
+    rm -f "$RUN_BODY"
+    exit 1
 fi
-# Check for a pre-built binary on the host (from a previous `dotnet publish`).
-if [ "$USE_DOCKER_EXEC" = "false" ]; then
-    for candidate in \
-        "$REPO_DIR/tools/TestRunner/bin/Release/net8.0/publish/TestRunner.dll" \
-        "$REPO_DIR/tools/TestRunner/bin/Release/net8.0/TestRunner.dll"; do
-        if [ -f "$candidate" ]; then
-            HOST_PREBUILT="$candidate"
-            break
-        fi
-    done
-fi
+rm -f "$RUN_BODY"
 
-if [ "$USE_DOCKER_EXEC" = "true" ]; then
-    # Inside the container, BC's WebSocket and API ports are local to the
-    # container itself, so always use localhost regardless of how the host
-    # has them mapped. The TestRunner.dll path is fixed by the Dockerfile.
-    #
-    # --verbose is now passed by default. Without it, every Log() message
-    # in TestRunner.dll is silently swallowed (the function gates on a
-    # `verbose` flag and writes to stderr only when set). That made the
-    # bc-copilot-blueprint debugging session needlessly painful: the
-    # runner would exit with "0 total, 0 passed, 0 failed" in 0 seconds
-    # and there was no way to see *why* — whether it was a connection
-    # failure, an empty suite, "All tests executed" on the first iter,
-    # or anything else. Verbose stderr is cheap and the right default.
-    #
-    # JUnit output: when --junit-output is set, TestRunner writes inside
-    # the container to /tmp/junit-result.xml, then we docker cp it back
-    # to the caller-supplied host path. This avoids needing to bind-mount
-    # the destination path.
-    JUNIT_FLAGS=()
-    if [ -n "$JUNIT_OUTPUT" ]; then
-        JUNIT_FLAGS+=(--junit-output /tmp/junit-result.xml)
-    fi
-    ( cd "$REPO_DIR" && docker compose exec -T bc dotnet /bc/tools/TestRunner/TestRunner.dll \
-        --verbose \
-        --host "localhost:7085" \
-        --odata-host "localhost:7052" \
-        --company "$COMPANY" \
-        --user "$AUTH_USER" \
-        --password "$AUTH_PASS" \
-        --suite "DEFAULT" \
-        --num-codeunits "$NUM_CODEUNITS" \
-        --timeout "$TIMEOUT_MIN" \
-        --codeunit-timeout 10 \
-        --max-iterations "$MAX_ITER" \
-        "${JUNIT_FLAGS[@]}" )
-    EXIT_CODE=$?
-    if [ -n "$JUNIT_OUTPUT" ]; then
-        # Pull the in-container JUnit file out to the host.
-        mkdir -p "$(dirname "$JUNIT_OUTPUT")"
-        if ( cd "$REPO_DIR" && docker compose cp bc:/tmp/junit-result.xml "$JUNIT_OUTPUT" 2>/dev/null ); then
-            echo "[run-tests] JUnit XML copied to $JUNIT_OUTPUT"
-        else
-            echo "[run-tests] WARN: TestRunner did not produce /tmp/junit-result.xml inside the container"
-        fi
-    fi
-elif [ -n "$HOST_PREBUILT" ]; then
-    # Pre-built binary on the host — no SDK needed, just the .NET 8 runtime.
-    echo "[run-tests] Using pre-built TestRunner at $HOST_PREBUILT"
-    JUNIT_FLAGS=()
-    if [ -n "$JUNIT_OUTPUT" ]; then
-        JUNIT_FLAGS+=(--junit-output "$JUNIT_OUTPUT")
-    fi
-    dotnet "$HOST_PREBUILT" \
-        --verbose \
-        --host "$WS_HOST" \
-        --odata-host "$ODATA_HOST" \
-        --company "$COMPANY" \
-        --user "$AUTH_USER" \
-        --password "$AUTH_PASS" \
-        --suite "DEFAULT" \
-        --num-codeunits "$NUM_CODEUNITS" \
-        --timeout "$TIMEOUT_MIN" \
-        --codeunit-timeout 10 \
-        --max-iterations "$MAX_ITER" \
-        "${JUNIT_FLAGS[@]}"
-    EXIT_CODE=$?
-elif command -v dotnet >/dev/null 2>&1; then
-    JUNIT_FLAGS=()
-    if [ -n "$JUNIT_OUTPUT" ]; then
-        JUNIT_FLAGS+=(--junit-output "$JUNIT_OUTPUT")
-    fi
-    dotnet run --project "$REPO_DIR/tools/TestRunner" -v q -- \
-        --verbose \
-        --host "$WS_HOST" \
-        --odata-host "$ODATA_HOST" \
-        --company "$COMPANY" \
-        --user "$AUTH_USER" \
-        --password "$AUTH_PASS" \
-        --suite "DEFAULT" \
-        --num-codeunits "$NUM_CODEUNITS" \
-        --timeout "$TIMEOUT_MIN" \
-        --codeunit-timeout 10 \
-        --max-iterations "$MAX_ITER" \
-        "${JUNIT_FLAGS[@]}"
-    EXIT_CODE=$?
-else
-    echo "ERROR: cannot run TestRunner — no execution method available."
-    echo "  Tried (in order):"
-    echo "    1. docker compose exec bc (container not found or missing TestRunner.dll)"
-    echo "    2. Pre-built binary at tools/TestRunner/bin/Release/net8.0/ (not found)"
-    echo "    3. dotnet run (dotnet SDK not installed)"
-    echo ""
-    echo "  Fix: start BC via 'docker compose up -d --wait', or run 'dotnet publish -c Release'"
-    echo "  in tools/TestRunner/, or install .NET 8 SDK."
+RESULTS_BODY=$(mktemp)
+RESULTS_HTTP=$(curl -s -o "$RESULTS_BODY" -w "%{http_code}" --max-time 30 -u "$AUTH" \
+    "${API_BASE}/testResults?\$filter=testSuite%20eq%20%27${SUITE_NAME}%27%20and%20lineType%20eq%20%27Function%27&\$top=20000" 2>/dev/null)
+if [ "$RESULTS_HTTP" != "200" ]; then
+    echo "ERROR: reading test results failed (HTTP $RESULTS_HTTP)"
+    sed 's/^/  /' "$RESULTS_BODY"
+    rm -f "$RESULTS_BODY"
     exit 1
 fi
 
-# The TestRunner already reads and prints results via OData.
-# Its exit code: 0 = all pass, 1 = failures or no tests.
+SUMMARY=$(JUNIT_OUTPUT="$JUNIT_OUTPUT" SUITE_NAME="$SUITE_NAME" py3 - "$RESULTS_BODY" <<'PY'
+import html
+import json
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    rows = json.load(handle).get("value", [])
+
+def status_of(row):
+    raw = str(row.get("result", "")).strip().lower()
+    if raw in {"success", "succeeded", "passed", "pass"}:
+        return "passed"
+    if raw in {"failure", "failed", "fail", "error"}:
+        return "failed"
+    return "skipped"
+
+cases = []
+for row in rows:
+    codeunit = str(row.get("testCodeunit", "")).strip()
+    method = str(row.get("functionName") or row.get("name") or "").strip()
+    status = status_of(row)
+    message = str(row.get("errorMessage") or row.get("errorMessagePreview") or "").strip()
+    stack = str(row.get("errorCallStack") or "").strip()
+    cases.append((codeunit, method, status, message, stack))
+
+total = len(cases)
+passed = sum(1 for _, _, status, _, _ in cases if status == "passed")
+failed = sum(1 for _, _, status, _, _ in cases if status == "failed")
+skipped = total - passed - failed
+
+print(f"total={total} passed={passed} failed={failed} skipped={skipped}")
+for codeunit, method, status, message, _ in cases:
+    label = f"{codeunit}.{method}" if codeunit else method
+    suffix = f" - {message}" if message and status == "failed" else ""
+    print(f"{status.upper():7} {label}{suffix}")
+
+junit_output = os.environ.get("JUNIT_OUTPUT", "").strip()
+if junit_output:
+    os.makedirs(os.path.dirname(junit_output) or ".", exist_ok=True)
+    suite = ET.Element(
+        "testsuite",
+        {
+            "name": os.environ.get("SUITE_NAME", "DEFAULT"),
+            "tests": str(total),
+            "failures": str(failed),
+            "skipped": str(skipped),
+        },
+    )
+    for codeunit, method, status, message, stack in cases:
+        case = ET.SubElement(
+            suite,
+            "testcase",
+            {
+                "classname": codeunit,
+                "name": method,
+            },
+        )
+        if status == "failed":
+            failure = ET.SubElement(case, "failure", {"message": html.escape(message)})
+            failure.text = stack or message
+        elif status == "skipped":
+            ET.SubElement(case, "skipped")
+    ET.ElementTree(suite).write(junit_output, encoding="utf-8", xml_declaration=True)
+
+sys.exit(1 if failed or total == 0 else 0)
+PY
+)
+EXIT_CODE=$?
+rm -f "$RESULTS_BODY"
+
+printf '%s\n' "$SUMMARY"
+if [ -n "$JUNIT_OUTPUT" ]; then
+    echo "[run-tests] JUnit XML written to $JUNIT_OUTPUT"
+fi
+
+if [ "$RUN_VALUE" = "false" ] && [ "$EXIT_CODE" = "0" ]; then
+    echo "ERROR: runCodeunit returned false without failed test rows"
+    exit 1
+fi
+
 exit $EXIT_CODE

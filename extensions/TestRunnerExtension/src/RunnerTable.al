@@ -73,6 +73,36 @@ table 99903 "Codeunit Run Request"
         }
 
         /// <summary>
+        /// Test suite name used when setting up and running tests.
+        /// </summary>
+        /// <remarks>
+        /// Defaults to DEFAULT for compatibility with existing callers.
+        /// </remarks>
+        field(7; SuiteName; Code[10])
+        {
+            Caption = 'Suite Name';
+            DataClassification = SystemMetadata;
+        }
+
+        /// <summary>
+        /// Extension app ID used for non-interactive suite discovery.
+        /// </summary>
+        field(8; ExtensionId; Text[36])
+        {
+            Caption = 'Extension Id';
+            DataClassification = SystemMetadata;
+        }
+
+        /// <summary>
+        /// Enables Business Central code coverage for this run.
+        /// </summary>
+        field(9; CollectCoverage; Boolean)
+        {
+            Caption = 'Collect Coverage';
+            DataClassification = SystemMetadata;
+        }
+
+        /// <summary>
         /// Current execution status of the request.
         /// </summary>
         /// <remarks>
@@ -136,6 +166,8 @@ table 99903 "Codeunit Run Request"
     begin
         if IsNullGuid(Id) then
             Id := CreateGuid();
+        if SuiteName = '' then
+            SuiteName := 'DEFAULT';
         if Status = Status::Pending then; // keep default status
     end;
 }
@@ -179,6 +211,9 @@ page 99902 "Codeunit Run Requests"
                 field(Id; Rec.Id) { Editable = false; }
                 field(CodeunitId; Rec.CodeunitId) { }
                 field(CodeunitIds; Rec.CodeunitIds) { }
+                field(SuiteName; Rec.SuiteName) { }
+                field(ExtensionId; Rec.ExtensionId) { }
+                field(CollectCoverage; Rec.CollectCoverage) { }
                 field(Status; Rec.Status) { Editable = false; }
                 field(LastResult; Rec.LastResult) { Editable = false; }
                 field(LastExecutionUTC; Rec.LastExecutionUTC) { Editable = false; }
@@ -204,8 +239,7 @@ page 99902 "Codeunit Run Requests"
 
     /// <summary>
     /// Sets up the test suite (creates suite, discovers test methods) without running.
-    /// Used by the WebSocket test runner to populate the suite before executing via
-    /// page 130455 which requires a client session for TestPage support.
+    /// Used by network API callers to populate the suite before executing it.
     /// </summary>
     [ServiceEnabled]
     procedure SetupSuite(): Boolean
@@ -219,14 +253,21 @@ page 99902 "Codeunit Run Requests"
         i: Integer;
         DashPos: Integer;
     begin
-        if Rec.CodeunitIds = '' then
+        if (Rec.CodeunitIds = '') and (Rec.ExtensionId = '') then
             exit(false);
 
         // Use runner 130450 (Test Runner - Isol. Codeunit) for proper codeunit isolation.
-        // 130450 = TestIsolation=Codeunit (fresh session per codeunit) ← CORRECT
-        // 130451 = TestIsolation=Disabled (no isolation) ← WRONG, causes cascading failures
-        SuiteRunner.InitSuite('DEFAULT');
-        OverrideSuiteRunner('DEFAULT', 130450);
+        // 130451 disables isolation and can cause cascading failures between codeunits.
+        SuiteRunner.InitSuite(GetSuiteName());
+        OverrideSuiteRunner(GetSuiteName(), 130450);
+
+        if Rec.ExtensionId <> '' then begin
+            SuiteRunner.AddTestCodeunitsByExtension(Rec.ExtensionId);
+            Rec.Status := Rec.Status::Pending;
+            Rec.LastResult := 'Suite ready';
+            Rec.Modify(true);
+            exit(true);
+        end;
 
         // Parse comma-separated IDs and ranges (same as RunCodeunit)
         IdList := Rec.CodeunitIds.Split(',');
@@ -270,7 +311,7 @@ page 99902 "Codeunit Run Requests"
             exit(false);
 
         // CodeunitIds field is repurposed here to carry "codeunitId:method,..." pairs
-        SuiteRunner.InitSuiteKeep('DEFAULT');
+        SuiteRunner.InitSuiteKeep(GetSuiteName());
         EntryList := Rec.CodeunitIds.Split(',');
         foreach Entry in EntryList do begin
             ColonPos := Entry.IndexOf(':');
@@ -304,6 +345,7 @@ page 99902 "Codeunit Run Requests"
     var
         SuiteRunner: Codeunit "Test Suite Runner";
         Log: Record "Log Table";
+        TestMethodLine: Record "Test Method Line";
         ResultText: Text;
         AllSuccess: Boolean;
         IdList: List of [Text];
@@ -324,29 +366,36 @@ page 99902 "Codeunit Run Requests"
         Commit();
 
         AllSuccess := true;
-        SuiteRunner.InitSuite('LINUX'); // Uses TestRunnerAPI (99903) as runner — logs to Log Table
+        SuiteRunner.InitSuite(GetSuiteName());
+        SuiteRunner.SetCoverageEnabled(GetSuiteName(), Rec.CollectCoverage);
 
-        if Rec.CodeunitIds <> '' then begin
+        if (Rec.CodeunitIds <> '') or (Rec.ExtensionId <> '') then begin
             // Batch mode: clear Log Table before starting so we get clean results
             Log.DeleteAll(false);
             Commit();
-            // Batch mode: parse "76550,76551,76554" or "76550-76554"
-            // bc-test passes only actual test codeunit IDs discovered from AL source
-            IdList := Rec.CodeunitIds.Split(',');
-            foreach IdToken in IdList do begin
-                IdToken := IdToken.Trim();
-                if IdToken.Contains('-') then begin
-                    RangeTokens := IdToken.Split('-');
-                    if (RangeTokens.Count = 2) and Evaluate(StartId, RangeTokens.Get(1)) and Evaluate(EndId, RangeTokens.Get(2)) then
-                        for CuId := StartId to EndId do begin
+
+            if Rec.ExtensionId <> '' then begin
+                SuiteRunner.AddTestCodeunitsByExtension(Rec.ExtensionId);
+                AddedAny := true;
+            end else begin
+                // Batch mode: parse "76550,76551,76554" or "76550-76554"
+                // bc-test passes only actual test codeunit IDs discovered from AL source
+                IdList := Rec.CodeunitIds.Split(',');
+                foreach IdToken in IdList do begin
+                    IdToken := IdToken.Trim();
+                    if IdToken.Contains('-') then begin
+                        RangeTokens := IdToken.Split('-');
+                        if (RangeTokens.Count = 2) and Evaluate(StartId, RangeTokens.Get(1)) and Evaluate(EndId, RangeTokens.Get(2)) then
+                            for CuId := StartId to EndId do begin
+                                SuiteRunner.AddTestCodeunit(CuId);
+                                AddedAny := true;
+                            end;
+                    end else
+                        if Evaluate(CuId, IdToken) then begin
                             SuiteRunner.AddTestCodeunit(CuId);
                             AddedAny := true;
                         end;
-                end else
-                    if Evaluate(CuId, IdToken) then begin
-                        SuiteRunner.AddTestCodeunit(CuId);
-                        AddedAny := true;
-                    end;
+                end;
             end;
 
             if not AddedAny then begin
@@ -357,20 +406,22 @@ page 99902 "Codeunit Run Requests"
                 exit(true);
             end;
 
-            SuiteRunner.RunSuite(); // TestRunnerAPI.OnAfterTestRun populates Log Table
+            SuiteRunner.RunSuite();
 
-            // Count results from Log Table
-            Log.SetRange(Success, true);
-            Passed := Log.Count();
-            Log.SetRange(Success, false);
-            Failed := Log.Count();
+            // Count results from Test Method Line.
+            TestMethodLine.SetRange("Test Suite", GetSuiteName());
+            TestMethodLine.SetRange("Line Type", TestMethodLine."Line Type"::Function);
+            TestMethodLine.SetRange(Result, TestMethodLine.Result::Success);
+            Passed := TestMethodLine.Count();
+            TestMethodLine.SetRange(Result, TestMethodLine.Result::Failure);
+            Failed := TestMethodLine.Count();
 
             if Failed = 0 then
                 ResultText := 'Success'
             else
                 ResultText := StrSubstNo('%1 test(s) failed', Failed);
         end else begin
-            // Single mode — TestRunnerAPI.OnAfterTestRun populates Log Table
+            // Single mode
             Rec.TestField(CodeunitId);
             SuiteRunner.AddTestCodeunit(Rec.CodeunitId);
             ResultText := SuiteRunner.RunSingleCodeunit(Rec.CodeunitId);
@@ -388,5 +439,26 @@ page 99902 "Codeunit Run Requests"
         Rec.LastExecutionUTC := CurrentDateTime();
         Rec.Modify(true);
         exit(AllSuccess);
+    end;
+
+    [ServiceEnabled]
+    procedure GetCodeCoverage(): Text
+    var
+        ALCodeCoverageMgt: Codeunit "AL Code Coverage Mgt.";
+        CSVResults: Text;
+        CCInfo: Text;
+    begin
+        if not ALCodeCoverageMgt.ConsumeCoverageResult(CSVResults, CCInfo) then
+            exit('');
+
+        exit(CCInfo + '\n' + CSVResults);
+    end;
+
+    local procedure GetSuiteName(): Code[10]
+    begin
+        if Rec.SuiteName = '' then
+            exit('DEFAULT');
+
+        exit(Rec.SuiteName);
     end;
 }

@@ -64,6 +64,12 @@ using System.Threading.Tasks;
 ///   in place (renders as a broken image) but report generation completes and the session
 ///   survives. The test code never inspects rendered image content.
 ///
+/// Patch #24: NSClientCallback.CreateDotNetHandle / HeadlessClientCallback.CreateDotNetHandle
+///   Tests that touch client-side DotNet controls (Camera, Barcode Scanner, etc.) need a
+///   client callback to allocate a handle. Headless Linux test sessions have no UI client,
+///   so the callback path throws and aborts the test session. Fix: return a dummy
+///   NavAutomationHandle so availability checks and no-op control probes can continue.
+///
 /// JMP hooks work ONLY on BC methods (JIT-compiled). BCL methods are ReadyToRun pre-compiled
 /// and cannot be patched this way.
 /// </summary>
@@ -253,6 +259,13 @@ internal class StartupHook
             PatchAzureADGraphQuery(args.LoadedAssembly);
         }
 
+        // Patch #24: Headless client-side DotNet controls should behave as
+        // unavailable/no-op instead of crashing the test session.
+        if (name == "Microsoft.Dynamics.Nav.Ncl")
+        {
+            PatchHeadlessCreateDotNetHandle(args.LoadedAssembly);
+        }
+
         // Patch #20: SideService watchdog — the entrypoint replaces the Reporting Service
         //   Windows .exe with a `sleep infinity` shell script. BC's Process.Start runs it,
         //   the watchdog sees a live process, and stops spamming errors.
@@ -263,6 +276,11 @@ internal class StartupHook
         if (name == "Microsoft.Dynamics.Nav.Server")
         {
             PatchSetupSideServices(args.LoadedAssembly);
+        }
+
+        if (name == "Microsoft.Dynamics.Nav.Service")
+        {
+            PatchServiceCreateDotNetHandle(args.LoadedAssembly);
         }
 
         if (name == "Microsoft.Dynamics.Nav.Watson")
@@ -436,7 +454,8 @@ internal class StartupHook
     // Windows DLLs that we provide stub implementations for
     private static readonly string[] _stubbedLibraries = new[]
     {
-        "kernel32", "kernel32.dll",
+        "kernel32", "kernel32.dll", "KernelBase", "KernelBase.dll",
+        "api-ms-win-core-profile-l1-1-0", "api-ms-win-core-profile-l1-1-0.dll",
         "user32", "user32.dll",
         "Wintrust", "Wintrust.dll", "wintrust", "wintrust.dll",
         "nclcsrts", "nclcsrts.dll",
@@ -2009,54 +2028,6 @@ internal class StartupHook
         return null;
     }
 
-    // ========================================================================
-    // Patch #16: Client Services Credential Bypass
-    // ========================================================================
-
-    private static void PatchClientCredentialValidation(Assembly navServiceAssembly)
-    {
-        try
-        {
-            // Patch the validator to not check the password but still populate the auth cache
-            var validatorType = navServiceAssembly.GetType(
-                "Microsoft.Dynamics.Nav.Service.ClientServicesUserNamePasswordValidator");
-            if (validatorType == null)
-            {
-                Console.WriteLine("[StartupHook] Patch #16: Validator type not found, skipping");
-                return;
-            }
-
-            var validateMethod = validatorType.GetMethod("ValidateAsync",
-                BindingFlags.Instance | BindingFlags.Public);
-            if (validateMethod == null)
-            {
-                Console.WriteLine("[StartupHook] Patch #16: ValidateAsync not found, skipping");
-                return;
-            }
-
-            var replacement = typeof(StartupHook).GetMethod(
-                nameof(Replacement_ValidateCredentials),
-                BindingFlags.Static | BindingFlags.NonPublic);
-            ApplyJmpHook(validateMethod, replacement!, "ClientServicesUserNamePasswordValidator.ValidateAsync");
-            Console.WriteLine("[StartupHook] Patch #16: Client credential validation bypassed");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[StartupHook] Patch #16 failed: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Replacement for ClientServicesUserNamePasswordValidator.ValidateAsync.
-    /// Always succeeds — credentials are trusted in pipeline/CI scenarios.
-    /// Signature: instance method, ValueTask ValidateAsync(ConnectionCredentials)
-    /// </summary>
-    private static ValueTask Replacement_ValidateCredentials(object? self, object? credentials)
-    {
-        Console.WriteLine("[StartupHook] Credential validation bypassed (Patch #16)");
-        return ValueTask.CompletedTask;
-    }
-
     /// <summary>
     /// Patch NavUser.TryAuthenticate to always return true.
     /// Called from Nav.Ncl.dll when it's loaded.
@@ -2095,7 +2066,6 @@ internal class StartupHook
 
     private static bool Replacement_TryAuthenticate(object? user, object? token, object? tenant)
     {
-        Console.WriteLine("[StartupHook] NavUser.TryAuthenticate bypassed — returning true (Patch #16b)");
         return true;
     }
 
@@ -2295,6 +2265,84 @@ internal class StartupHook
         // Intentionally empty — break Microsoft's recursion bug in Nav.OpenXml.
         // No log line per call: this is invoked once per missing image and we don't want
         // to spam logs during legitimate report generation.
+    }
+
+    // ========================================================================
+    // Patch #24: Client-side DotNet handle creation in headless sessions
+    // ========================================================================
+
+    private static void PatchServiceCreateDotNetHandle(Assembly navService)
+    {
+        try
+        {
+            var callbackType = navService.GetType("Microsoft.Dynamics.Nav.Service.NSClientCallback");
+            PatchCreateDotNetHandleMethod(callbackType, "NSClientCallback.CreateDotNetHandle");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[StartupHook] Patch #24 (NSClientCallback) failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    private static void PatchHeadlessCreateDotNetHandle(Assembly navNcl)
+    {
+        try
+        {
+            var callbackType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.HeadlessClientCallback");
+            PatchCreateDotNetHandleMethod(callbackType, "HeadlessClientCallback.CreateDotNetHandle");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[StartupHook] Patch #24 (HeadlessClientCallback) failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    private static void PatchCreateDotNetHandleMethod(Type? callbackType, string name)
+    {
+        if (callbackType == null)
+        {
+            Console.WriteLine($"[StartupHook] Patch #24: {name} type not found — skipping");
+            return;
+        }
+
+        var method = callbackType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            .FirstOrDefault(m => m.Name == "CreateDotNetHandle" && m.GetParameters().Length == 6);
+        if (method == null)
+        {
+            Console.WriteLine($"[StartupHook] Patch #24: {name} method not found — skipping");
+            return;
+        }
+
+        var replacement = typeof(StartupHook).GetMethod(
+            nameof(Replacement_CreateDotNetHandle),
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+        ApplyJmpHook(method, replacement, name);
+        Console.WriteLine($"[StartupHook] Patch #24: {name} hooked (dummy client DotNet handle)");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static object Replacement_CreateDotNetHandle(
+        object self,
+        string? assemblyFullName,
+        string? typeName,
+        Guid formHandle,
+        string? varName,
+        bool createInstance,
+        object[] arguments)
+    {
+        return CreateDummyNavAutomationHandle();
+    }
+
+    private static object CreateDummyNavAutomationHandle()
+    {
+        var handleType = Type.GetType("Microsoft.Dynamics.Nav.Types.NavAutomationHandle, Microsoft.Dynamics.Nav.Types");
+        if (handleType == null)
+        {
+            throw new InvalidOperationException("NavAutomationHandle type not loaded");
+        }
+
+        return Activator.CreateInstance(handleType, -1, false)
+            ?? throw new InvalidOperationException("NavAutomationHandle constructor returned null");
     }
 
     // ========================================================================

@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# workflow-summary.sh — Per-phase timing + counter capture for bc-linux
-# test workflows. Emits a markdown summary to the CI surface AND posts
-# anonymous telemetry to the bc-linux Application Insights instance so
-# we can collect real-world performance benchmarks across consumers.
+# workflow-summary.sh — Per-phase timing + counter capture for Business
+# Central container test workflows. Emits a markdown summary to the CI surface
+# AND posts anonymous telemetry so we can collect real-world performance
+# benchmarks across consumers.
 #
 # Usage from inside a workflow step:
 #
 #   # At workflow start, before any timed phase:
-#   bash bc-linux/scripts/workflow-summary.sh init
+#   bash bc-runtime/scripts/workflow-summary.sh init
 #
 #   # Around each timed phase:
-#   bash bc-linux/scripts/workflow-summary.sh begin <phase-id> "<phase-label>"
+#   bash bc-runtime/scripts/workflow-summary.sh begin <phase-id> "<phase-label>"
 #   ... do work ...
-#   bash bc-linux/scripts/workflow-summary.sh end <phase-id>
+#   bash bc-runtime/scripts/workflow-summary.sh end <phase-id>
 #
 #   # Capture informational counters at any point:
-#   bash bc-linux/scripts/workflow-summary.sh count apps_compiled 5
-#   bash bc-linux/scripts/workflow-summary.sh count tests_passed 142
+#   bash bc-runtime/scripts/workflow-summary.sh count apps_compiled 5
+#   bash bc-runtime/scripts/workflow-summary.sh count tests_passed 142
 #
 #   # At the very end (with `if: always()` so it runs on failure too):
-#   bash bc-linux/scripts/workflow-summary.sh emit
+#   bash bc-runtime/scripts/workflow-summary.sh emit
 #
 # The summary is written to:
 #   - $GITHUB_STEP_SUMMARY when running under GitHub Actions
@@ -28,7 +28,7 @@
 #
 # Telemetry:
 #
-# At `emit` time, a single batch of events is POSTed to bc-linux's
+# At `emit` time, a single batch of events is POSTed to the project
 # Application Insights ingestion endpoint (Poland Central). The data is
 # anonymous-ish: repo owner/name from $GITHUB_REPOSITORY, BC version,
 # runner OS, per-phase durations, and the informational counters.
@@ -40,8 +40,8 @@
 #
 # Why telemetry: the goal is to collect real-world wall-time benchmarks
 # from many downstream consumers so we can build a credible
-# "Linux is faster than Windows BC" case for Microsoft. Without data
-# from real pipelines this remains anecdotal.
+# hosted Business Central container support case. Without data from real
+# pipelines this remains anecdotal.
 #
 # Phase ordering in the final table is the order in which 'begin' was
 # called. Phases not closed by 'end' show as "(in progress)" — useful
@@ -51,7 +51,7 @@ set -e
 
 # ── Telemetry endpoint (App Insights — Poland Central) ──────────────────
 # These are public telemetry credentials. The instrumentation key is the
-# unique identifier for the bc-linux App Insights instance and is meant
+# unique identifier for the project App Insights instance and is meant
 # to be embedded in client code (just like a Google Analytics tracking
 # ID). It does NOT grant any read access to the data.
 TELEMETRY_IKEY="d4bb1fdf-d36d-4582-859d-1ab9be8d6f29"
@@ -59,7 +59,7 @@ TELEMETRY_INGESTION="https://polandcentral-0.in.applicationinsights.azure.com/v2
 
 # Shared scratch dir survives across job steps within the same runner
 # (each GH Actions step gets a fresh shell but the filesystem persists).
-TIMINGS_DIR="${BC_LINUX_TIMINGS_DIR:-/tmp/bc-linux-timings}"
+TIMINGS_DIR="${BC_CONTAINER_TIMINGS_DIR:-${BC_LINUX_TIMINGS_DIR:-/tmp/bc-container-timings}}"
 
 cmd="${1:-}"; shift || true
 
@@ -138,10 +138,9 @@ case "$cmd" in
         FAILURE_LOG=""
         if [ "$JOB_STATUS_VALUE" != "success" ]; then
             if command -v docker >/dev/null 2>&1; then
-                # Try common compose locations: $REPO_DIR/bc-linux is what
-                # the templates check out to; ./bc-linux when running from
-                # the workspace root; . if we're already inside bc-linux.
-                for compose_dir in "${GITHUB_WORKSPACE:-.}/bc-linux" "./bc-linux" "."; do
+                # Try common compose locations used by the templates, plus
+                # the legacy bc-linux path kept for older copied workflows.
+                for compose_dir in "${GITHUB_WORKSPACE:-.}/bc-runtime" "./bc-runtime" "${GITHUB_WORKSPACE:-.}/bc-linux" "./bc-linux" "."; do
                     if [ -f "$compose_dir/docker-compose.yml" ]; then
                         FAILURE_LOG=$(cd "$compose_dir" && docker compose logs bc 2>&1 | tail -80 || true)
                         break
@@ -228,7 +227,7 @@ ${LOG_SNIPPET}
 
         SUMMARY="$SUMMARY
 
-> bc-linux \`workflow-summary.sh\` — see [StefanMaron/MsDyn365Bc.On.Linux](https://github.com/StefanMaron/MsDyn365Bc.On.Linux)"
+> Business Central container \`workflow-summary.sh\` — see [jonaswre/MsDyn365Bc.On.Linux](https://github.com/jonaswre/MsDyn365Bc.On.Linux)"
 
         # Write to whichever CI summary surface is available.
         if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
@@ -244,7 +243,7 @@ ${LOG_SNIPPET}
             echo "$SUMMARY"
         fi
 
-        # ─── Telemetry: post to bc-linux Application Insights ────────
+        # ─── Telemetry: post to Application Insights ─────────────────
         if [ "${BC_TELEMETRY_OPT_OUT:-}" = "true" ] || [ "${BC_TELEMETRY_OPT_OUT:-}" = "1" ]; then
             echo "[telemetry] opted out (BC_TELEMETRY_OPT_OUT is set)"
             exit 0
@@ -257,7 +256,7 @@ ${LOG_SNIPPET}
         # Build the telemetry payload via python3 — easier than escaping
         # JSON in shell. Reads phase timings + counters from $TIMINGS_DIR.
         TELEMETRY_PAYLOAD=$(
-            BC_LINUX_TIMINGS_DIR="$TIMINGS_DIR" \
+            BC_CONTAINER_TIMINGS_DIR="$TIMINGS_DIR" \
             TELEMETRY_IKEY="$TELEMETRY_IKEY" \
             T_WORKFLOW_START="$T_START" \
             T_WORKFLOW_END="$T_NOW" \
@@ -267,7 +266,7 @@ ${LOG_SNIPPET}
             python3 - <<'PYEOF'
 import json, os, sys, datetime, uuid
 
-timings_dir = os.environ['BC_LINUX_TIMINGS_DIR']
+timings_dir = os.environ['BC_CONTAINER_TIMINGS_DIR']
 ikey        = os.environ['TELEMETRY_IKEY']
 t_start     = int(os.environ['T_WORKFLOW_START'])
 t_end       = int(os.environ['T_WORKFLOW_END'])
@@ -278,7 +277,7 @@ failure_log  = os.environ.get('FAILURE_LOG', '')
 # Common identifying tags (anonymous-ish, never includes secrets/source).
 operation_id = str(uuid.uuid4())
 tags = {
-    "ai.cloud.role": "bc-linux-pipeline",
+    "ai.cloud.role": "bc-container-pipeline",
     "ai.cloud.roleInstance": os.environ.get("RUNNER_NAME") or os.environ.get("AGENT_NAME") or "unknown",
     "ai.operation.id": operation_id,
     "ai.application.ver": os.environ.get("BC_VERSION", "unknown"),
@@ -395,8 +394,8 @@ PYEOF
                 ACCEPTED=$(python3 -c "import sys,json; d=json.load(open('/tmp/telemetry.out')); print(d.get('itemsAccepted', 0))" 2>/dev/null || echo "0")
                 RECEIVED=$(python3 -c "import sys,json; d=json.load(open('/tmp/telemetry.out')); print(d.get('itemsReceived', 0))" 2>/dev/null || echo "0")
                 if [ "$ACCEPTED" = "$EVENT_COUNT" ] && [ "$ACCEPTED" != "0" ]; then
-                    echo "[telemetry] sent $EVENT_COUNT events to bc-linux App Insights ($ACCEPTED/$RECEIVED accepted)."
-                    echo "[telemetry] data lands in the 'customEvents' table — query with cloud_RoleName == \"bc-linux-pipeline\"."
+                    echo "[telemetry] sent $EVENT_COUNT events to Business Central container App Insights ($ACCEPTED/$RECEIVED accepted)."
+                    echo "[telemetry] data lands in the 'customEvents' table — query with cloud_RoleName == \"bc-container-pipeline\"."
                     echo "[telemetry] set BC_TELEMETRY_OPT_OUT=true to disable."
                 else
                     echo "[telemetry] WARN: App Insights accepted only $ACCEPTED of $RECEIVED events. Response:"

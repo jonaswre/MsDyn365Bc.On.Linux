@@ -27,7 +27,8 @@ elif [ $# -eq 4 ]; then
     BC_TYPE="$1"; BC_VERSION="$2"; BC_COUNTRY="$3"; DEST="$4"
     BASE_URL="https://bcartifacts-exdbf9fwegejdqak.b02.azurefd.net"
 
-    # Resolve short version (e.g. "27.5") to full version (e.g. "27.5.46862.48612)
+    # Resolve "latest" or a short version (e.g. "27.5") to a full version
+    # (e.g. "27.5.46862.48612")
     # using the per-country JSON index file that Microsoft maintains for
     # navcontainerhelper:
     #
@@ -44,9 +45,14 @@ elif [ $# -eq 4 ]; then
     # "27.5.46862.48612" via BC_VERSION — the regex below sees three parts
     # and goes straight to the download.
     if ! echo "$BC_VERSION" | grep -qP '^\d+\.\d+\.\d+'; then
-        echo "[artifacts] Resolving version $BC_VERSION via Microsoft's index file..."
-        T_RESOLVE=$(_ms)
+        REQUESTED_VERSION="$BC_VERSION"
         REQUESTED_PREFIX="$BC_VERSION"
+        if [ -z "$REQUESTED_VERSION" ] || [ "$REQUESTED_VERSION" = "latest" ]; then
+            REQUESTED_VERSION="latest"
+            REQUESTED_PREFIX=""
+        fi
+        echo "[artifacts] Resolving version $REQUESTED_VERSION via Microsoft's index file..."
+        T_RESOLVE=$(_ms)
         INDEX_URL="$BASE_URL/${BC_TYPE}/indexes/${BC_COUNTRY}.json"
         RESOLVED=""
         # Three attempts in case of transient network errors. The index
@@ -57,12 +63,19 @@ elif [ $# -eq 4 ]; then
             RESOLVED=$(curl -sf --retry 2 --retry-delay 2 "$INDEX_URL" 2>/dev/null | \
                 BC_PREFIX="$REQUESTED_PREFIX" python3 -c "
 import json, os, sys
-prefix = os.environ['BC_PREFIX'] + '.'
+prefix = os.environ['BC_PREFIX']
 try:
     data = json.load(sys.stdin)
 except Exception as e:
     sys.exit(1)
-versions = [d['Version'] for d in data if d.get('Version', '').startswith(prefix)]
+versions = []
+for artifact in data:
+    version = artifact.get('Version', '')
+    if not version:
+        continue
+    if prefix and not version.startswith(prefix + '.'):
+        continue
+    versions.append(version)
 if not versions:
     sys.exit(0)
 def vkey(v):
@@ -70,20 +83,26 @@ def vkey(v):
 versions.sort(key=vkey)
 print(versions[-1])
 " 2>/dev/null || true)
-            if [ -n "$RESOLVED" ] && echo "$RESOLVED" | grep -q "^${REQUESTED_PREFIX}\."; then
-                break
+            if [ -n "$RESOLVED" ]; then
+                if [ -z "$REQUESTED_PREFIX" ] || echo "$RESOLVED" | grep -q "^${REQUESTED_PREFIX}\."; then
+                    break
+                fi
             fi
             RESOLVED=""
-            echo "[artifacts] WARN: attempt $attempt — index file unreachable or no '$REQUESTED_PREFIX.x' versions found; retrying..."
+            if [ -n "$REQUESTED_PREFIX" ]; then
+                echo "[artifacts] WARN: attempt $attempt — index file unreachable or no '$REQUESTED_PREFIX.x' versions found; retrying..."
+            else
+                echo "[artifacts] WARN: attempt $attempt — index file unreachable or no versions found; retrying..."
+            fi
             sleep 3
         done
         if [ -z "$RESOLVED" ]; then
-            echo "[artifacts] ERROR: Could not resolve version $REQUESTED_PREFIX from $INDEX_URL"
+            echo "[artifacts] ERROR: Could not resolve version $REQUESTED_VERSION from $INDEX_URL"
             echo "[artifacts] Workaround: pin BC_VERSION to a fully-qualified version, e.g.:"
             echo "[artifacts]   BC_VERSION=27.5.46862.48612 docker compose up -d --wait"
             exit 1
         fi
-        echo "[artifacts] Resolved: $REQUESTED_PREFIX → $RESOLVED ($(( $(_ms) - T_RESOLVE ))ms)"
+        echo "[artifacts] Resolved: $REQUESTED_VERSION → $RESOLVED ($(( $(_ms) - T_RESOLVE ))ms)"
         BC_VERSION="$RESOLVED"
     fi
 

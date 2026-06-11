@@ -1,14 +1,14 @@
-# GitHub Actions starter workflows for bc-linux
+# GitHub Actions Starter Workflows For Business Central Containers
 
-Run AL tests against a Business Central NST on Linux from your own GitHub
+Run AL tests against a Business Central container from your own GitHub
 repo. All flavours pull the public
-`ghcr.io/stefanmaron/msdyn365bc.on.linux/bc-runner` image (no auth needed)
-and use the bc-linux scripts to boot BC, publish your apps, and execute
+`ghcr.io/jonaswre/msdyn365bc.on.linux/bc-runner` image (no auth needed)
+and use the bundled scripts to boot BC, publish your apps, and execute
 tests via the bundled TestRunnerExtension.
 
 ## ✨ Recommended: reusable workflow (10-line consumer file)
 
-`bc-linux` ships two **reusable workflows** in its own `.github/workflows/`
+This repo ships two **reusable workflows** in its own `.github/workflows/`
 that you can call from your repo. The consumer file is tiny:
 
 ```yaml
@@ -17,9 +17,9 @@ name: BC Tests
 on: [push, pull_request, workflow_dispatch]
 jobs:
   bc-tests:
-    uses: StefanMaron/MsDyn365Bc.On.Linux/.github/workflows/bc-test-from-source.yml@master
+    uses: jonaswre/MsDyn365Bc.On.Linux/.github/workflows/bc-test-from-source.yml@master
     with:
-      bc_version:     "27.5"
+      bc_version:     "latest"
       app_dirs:       "app"
       test_app_dirs:  "test"
       codeunit_range: "50000..99999"
@@ -43,17 +43,19 @@ reproducible CI runs swap it for a release tag once one exists
 
 | Input | Required | Default | Description |
 |---|---|---|---|
-| `bc_version` | no | `27.5` | BC platform version |
+| `bc_version` | no | `latest` | BC platform version. Use `latest` for the newest artifact, or pin a major/minor/full version such as `28.1`. |
 | `bc_country` | no | `w1` | BC country code |
-| `bc_type` | no | `sandbox` | `sandbox` or `onprem` |
+| `bc_type` | no | `onprem` | `onprem` or `sandbox` |
+| `bc_username` | no | `admin` | NavUserPassword username for OData/API/Dev/WebClient access |
+| `bc_password` | no | `admin` | NavUserPassword password for OData/API/Dev/WebClient access |
 | `app_dirs` | no | `""` | Space-separated dirs containing `app.json` for production apps |
 | `test_app_dirs` | **yes** | — | Space-separated dirs containing `app.json` for test apps |
 | `codeunit_range` | **yes** | — | IDs of your **test** codeunits to execute. Production app codeunits are published but not run. Accepts `"50000..99999"` (single AL range), `"50000..50100\|130450..130459"` (multiple ranges, pipe-separated), `"50000,50001,50002"` (explicit ids), or any mix. |
-| `al_tool_version` | no | *(auto-derived from bc_version)* | Linux AL compiler NuGet version. Auto-derived: BC 27 → `16.2.28.57946`, BC 28 → `17.0.34.45391`. Set explicitly to pin. |
+| `al_tool_version` | no | *(auto-derived from bc_version)* | AL compiler CLI tool NuGet version. Auto-derived: BC 27 -> `16.2.28.57946`, BC 28 -> `17.0.34.45391`. Set explicitly to pin. |
 | `preprocessor_symbols` | no | `""` | Comma-separated preprocessor symbols for `/preprocessorsymbols` (e.g. `"BC27PLUS,BC28PLUS"`). |
 | `runtime_version` | no | *(auto-derived from bc_version)* | Override `app.json` `runtime` before compile. Auto-derived when blank: BC 27 → `16.0`, BC 28 → `17.0`. |
 | `runner_image` | no | public ghcr.io tag | Override the bc-runner image |
-| `bc_linux_ref` | no | `master` | Git ref of `MsDyn365Bc.On.Linux` to check out for scripts |
+| `runtime_ref` | no | `master` | Git ref of the Business Central runtime to check out for scripts |
 | `timeout_minutes` | no | `45` | Job timeout |
 | `enable_code_cop` | no | `false` | Enable Microsoft CodeCop |
 | `enable_ui_cop` | no | `false` | Enable Microsoft UICop |
@@ -86,7 +88,7 @@ Then call the reusable workflow with:
 ```yaml
 jobs:
   bc-tests:
-    uses: StefanMaron/MsDyn365Bc.On.Linux/.github/workflows/bc-test-from-source.yml@master
+    uses: jonaswre/MsDyn365Bc.On.Linux/.github/workflows/bc-test-from-source.yml@master
     with:
       ...
     secrets:
@@ -106,16 +108,17 @@ in your repo and edit the `env:` block at the top.
 | [`bc-test-prebuilt.yml`](./bc-test-prebuilt.yml) | You already have `.app` files; skips compilation. |
 
 These are functionally equivalent to the reusable workflows above — just
-copied into your repo so you can edit them freely. Trade-off: when bc-linux
-ships an improvement, you'll have to re-copy it.
+copied into your repo so you can edit them freely. Trade-off: when this
+container workflow improves, you'll have to re-copy it.
 
 All flavours:
 
-- Boot BC and SQL Server in Linux containers (no Windows runner required)
+- Boot BC and SQL Server with Docker containers on a standard hosted runner
 - Download BC artifacts on demand (~50s on a hosted runner thanks to the
   HTTP/1.1 fix in `download-artifacts.sh`)
 - Publish via the BC dev endpoint
-- Execute tests via `bc-linux/scripts/run-tests.sh` (hybrid OData + WebSocket)
+- Execute tests via `scripts/run-tests.sh` over the same published BC network
+  surface used by other Business Central container automation
 - Print the BC log tail on failure
 
 ## Setup
@@ -124,7 +127,8 @@ All flavours:
    `.github/workflows/bc-test.yml` (or any name you like).
 2. **Edit the `env:` block** at the top:
    - `BC_VERSION`, `BC_COUNTRY`, `BC_TYPE` — which Microsoft BC build to test
-     against. Defaults: `27.5` / `w1` / `sandbox`.
+     against. The inline templates stay pinned for reproducible copy-paste
+     builds; the reusable workflows default to `latest`.
    - **From-source**: `APP_DIRS` and `TEST_APP_DIRS` — space-separated paths
      to directories containing `app.json`.
    - **Pre-built**: `APP_FILES` and `TEST_APP_FILES` — space-separated paths
@@ -137,16 +141,18 @@ All flavours:
 
 ## What's running under the hood
 
-- **Image**: `ghcr.io/stefanmaron/msdyn365bc.on.linux/bc-runner:latest` — multi-stage Docker
+- **Image**: `ghcr.io/jonaswre/msdyn365bc.on.linux/bc-runner:latest` — multi-stage Docker
   image that downloads Microsoft BC artifacts at boot, copies the .NET 8
   service tier into place, applies a startup-hook patch set, restores the
-  CRONUS demo DB, and exposes BC on the standard 7045–7089 ports.
-- **bc-linux repo checkout**: brings in `docker-compose.yml`, `run-tests.sh`,
+  CRONUS demo DB, and exposes the standard BC service endpoints used by
+  container automation: Management 7045, Client Services 7046, SOAP 7047,
+  OData 7048, Dev 7049, API 7052, WebClient 7085, and Management API 7086.
+- **Repository checkout**: brings in `docker-compose.yml`, `run-tests.sh`,
   the `TestRunnerExtension.app` (bundled in the image, but the script also
   exists on the host for orchestration), and `download-artifacts.sh`.
 - **TestRunnerExtension**: an AL extension shipped with the image. Exposes
-  the OData/WebSocket endpoints `run-tests.sh` uses to populate test suites,
-  execute methods, and read results.
+  the network API pages `run-tests.sh` uses to populate test suites, execute
+  codeunits, and read results.
 
 ## Custom analyzers and rulesets
 
@@ -164,7 +170,7 @@ When **any** analyzer is configured, the compile step captures
 output and fails the workflow if it sees `AD0001`, `Could not load`,
 `BadImageFormatException`, or `PlatformNotSupportedException` — so a
 silently-broken cop can never produce a green build with disabled
-enforcement. This is the load guarantee bc-linux gives you on top of
+enforcement. This is the load guarantee these workflows give you on top of
 AL compile's normal exit-code semantics.
 
 A worked example using the reusable flavour:
@@ -172,9 +178,9 @@ A worked example using the reusable flavour:
 ```yaml
 jobs:
   bc-tests:
-    uses: StefanMaron/MsDyn365Bc.On.Linux/.github/workflows/bc-test-from-source.yml@master
+    uses: jonaswre/MsDyn365Bc.On.Linux/.github/workflows/bc-test-from-source.yml@master
     with:
-      bc_version:     "27.5"
+      bc_version:     "latest"
       app_dirs:       "app"
       test_app_dirs:  "test"
       codeunit_range: "50000..99999"
@@ -196,7 +202,7 @@ that hides the real cause, `ALCops.Common.dll` co-load) live in
 ## Customising further
 
 - **Multiple BC versions**: turn the single job into a matrix on `BC_VERSION`.
-  See `.github/workflows/test-versions.yml` in the bc-linux repo for a
+  See `.github/workflows/test-versions.yml` in this repo for a
   worked example.
 - **Different artifact source**: pass `BC_ARTIFACT_URL=skip` to the BC
   container env and pre-populate `BC_ARTIFACTS_DIR` yourself.
@@ -212,14 +218,14 @@ that hides the real cause, `ALCops.Common.dll` co-load) live in
 |---|---|
 | `BC unhealthy` after several minutes | Artifact download timed out, or first-boot DB restore is still running. Look at the failure log tail in the workflow output. |
 | `publish failed: 422` | App schema conflict — make sure your version number bumps between runs, or set `SchemaUpdateMode=ForceSync` (already the default in these templates). |
-| `Could not get company ID` | BC isn't reachable on `localhost:7048`. Check that the container is `healthy` and that the OData port is mapped. |
-| AL compile errors about missing symbols | The "Stage symbols" step couldn't find a dependency. Check the downloaded artifact structure and add the missing path to that step. |
-| Test fails with `serviceConnection` errors | Use the latest `bc-runner` image — `serviceConnection`/TestPage support depends on patches #17–#23 in the startup hook. |
+| `Could not get company ID` | BC isn't reachable through the configured API/OData endpoint. Check that the container is `healthy` and that the API/OData ports are mapped. |
+| AL compile errors about missing symbols | The "Stage symbols" step could not resolve a declared dependency. Check the consumer `app.json` dependency IDs, the selected artifact version, and the `stage-symbols.py` warning output. |
+| Test fails with `serviceConnection` errors | Use the latest `bc-runner` image — `serviceConnection`/TestPage support depends on the current startup-hook patch set. |
 
 ## Reporting issues
 
-If a workflow fails on the bc-linux side (not your AL code), open an issue
-at <https://github.com/StefanMaron/MsDyn365Bc.On.Linux/issues> with:
+If a workflow fails in the container workflow layer (not your AL code), open an issue
+at <https://github.com/jonaswre/MsDyn365Bc.On.Linux/issues> with:
 
 - Your `env:` block
 - The BC version you targeted

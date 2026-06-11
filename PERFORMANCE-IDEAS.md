@@ -37,12 +37,13 @@ not network latency. **Docker bridge is fine.**
 ### Experiment 2: Server GC (DOTNET_gcServer=1)
 
 Hypothesis: Server GC reduces pause frequency, improving throughput.
-Result: **Breaks the API endpoint.** BC's OData/API port (7052) returns 400
-errors with Server GC enabled. The HttpSysStub or request handling pipeline
-is incompatible with Server GC's thread pool behavior. **Cannot use.**
+Historical result: an older build broke the API endpoint when Server GC was
+enabled. Current BC 27/28 Linux images run with `DOTNET_gcServer=1` and the
+network API surface on port 7048 is part of the supported test path, so treat
+this experiment as superseded unless you are reproducing that older image.
 
 Baseline (Workstation GC): 62-64s avg (3 runs, warm).
-Server GC: API broken, tests cannot run.
+Server GC: superseded by current runtime defaults.
 
 ### Experiment 3: SQL Server Tuning (MAXDOP, ad hoc, cost threshold)
 
@@ -242,14 +243,15 @@ But there may be other angles:
 
 - Batch multiple codeunits per session where isolation isn't strictly needed
   (risky — some tests leave dirty state)
-- Reduce WebSocket round-trip overhead between test runner and BC
+- Reduce OData/API round-trip overhead between the host runner and BC
 - Pipeline the next codeunit setup while current one is executing
 
 ## 7. Wild Ideas
 
 - **Patch the AL interpreter hot loop** — if profiling shows a specific method
   in Nav.Ncl's AL execution engine is hot, a targeted JMP hook could optimize it
-- **Shared memory IPC** instead of WebSocket for test runner ↔ BC communication
+- **Server-side batch execution endpoint** for test runner ↔ BC communication,
+  while keeping the host-facing contract HTTP-only
 - **Snapshot/restore at DB level** between codeunits (SQL Server snapshots are
   near-instant) instead of relying on transaction rollback
 

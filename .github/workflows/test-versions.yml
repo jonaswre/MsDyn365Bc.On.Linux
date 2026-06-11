@@ -121,7 +121,7 @@ jobs:
     with:
       bc_version: ${{ matrix.bc_version }}
       bc_country: w1
-      bc_type: sandbox
+      bc_type: onprem
       test_app_dirs: extensions/smoke-test
       # Pipe form deliberately exercises the multi-range parser end-to-end on
       # the hosted runner so a regression in run-tests.sh's normalization shows
@@ -132,12 +132,12 @@ jobs:
       # above and the reusable workflow's pull step look up the image by
       # this exact tag — guarantees the matrix tests against the same
       # image we just built, even if :latest changes underneath us.
-      runner_image: ghcr.io/stefanmaron/msdyn365bc.on.linux/bc-runner:${{ github.sha }}
-      # Pin the bc-linux scripts checkout to this commit too, so a test
+      runner_image: ghcr.io/jonaswre/msdyn365bc.on.linux/bc-runner:${{ github.sha }}
+      # Pin the runtime scripts checkout to this commit too, so a test
       # at SHA X uses entrypoint.sh / run-tests.sh / publish-app.sh /
       # wait-for-bc-healthy.sh from SHA X. Without this we'd test the
       # SHA X image with master scripts.
-      bc_linux_ref: ${{ github.sha }}
+      runtime_ref: ${{ github.sha }}
       # ─── Analyzer load validation ───────────────────────────────────────
       # Every matrix leg compiles the smoke test with all four Microsoft cops
       # PLUS the latest ALCops nupkg PLUS a JSON ruleset that includes
@@ -147,7 +147,7 @@ jobs:
       # PlatformNotSupportedException and fails the job if any of those
       # appear — catches "cop DLL silently failed to load on a new BC
       # version" regressions immediately, across the whole support matrix.
-      # extensions/smoke-test/cops.rulset.json is bc-linux-internal and
+      # extensions/smoke-test/cops.rulset.json is runtime-internal and
       # NOT shipped to consumers via the template — they bring their own
       # ruleset and customCodeCops via the workflow inputs.
       enable_code_cop: true
@@ -164,7 +164,7 @@ jobs:
 
   # Exercises the container's own artifact download path (no pre-cached
   # artifacts). Verifies the in-container download feature and lets us
-  # measure download speed directly. Runs once (BC 27.5) in parallel
+  # measure download speed directly. Runs once (BC 28.1) in parallel
   # with the main matrix. Doesn't fit the reusable workflow pattern
   # because the reusable workflow always pre-downloads artifacts on
   # the host.
@@ -200,6 +200,7 @@ jobs:
         # Use the shared healthcheck script. 30-min budget covers the
         # in-container artifact download (~3 min) + BC boot (~3-5 min).
         ./scripts/wait-for-bc-healthy.sh 30
+        ./scripts/verify-network-surface.sh
         echo "TOTAL_DURATION=$(($(date +%s) - STEP_START))" >> $GITHUB_ENV
 
     - name: Download timing summary

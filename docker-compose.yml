@@ -2,7 +2,7 @@ services:
   sql:
     image: mcr.microsoft.com/mssql/server:2022-latest
     environment:
-      ACCEPT_EULA: "Y"
+      ACCEPT_EULA: ${ACCEPT_EULA:-Y}
       SA_PASSWORD: ${SA_PASSWORD:-Passw0rd123!}
       MSSQL_MEMORY_LIMIT_MB: ${MSSQL_MEMORY_LIMIT_MB:-2048}
     ports:
@@ -27,20 +27,32 @@ services:
     build:
       context: .
       dockerfile: src/Dockerfile
+    mem_limit: ${BC_MEMORY_LIMIT:-8G}
+    dns: ${BC_DNS:-}
     stdin_open: true
     depends_on:
       sql:
         condition: service_healthy
     ports:
+      - "${BC_CLIENT_SERVICES_PORT:-7046}:7046"
+      - "${BC_SOAP_PORT:-7047}:7047"
       - "${BC_DEV_PORT:-7049}:7049"
       - "${BC_ODATA_PORT:-7048}:7048"
       - "${BC_API_PORT:-7052}:7052"
       - "${BC_MGMT_PORT:-7045}:7045"
+      - "${BC_MGMT_API_PORT:-7086}:7086"
       - "${BC_CLIENT_PORT:-7085}:7085"
     environment:
-      BC_VERSION: ${BC_VERSION:-28.1}
+      BC_VERSION: ${BC_VERSION:-latest}
       BC_COUNTRY: ${BC_COUNTRY:-w1}
-      BC_TYPE: ${BC_TYPE:-sandbox}
+      BC_TYPE: ${BC_TYPE:-onprem}
+      ACCEPT_EULA: ${ACCEPT_EULA:-Y}
+      BC_USERNAME: ${BC_USERNAME:-admin}
+      BC_PASSWORD: ${BC_PASSWORD:-admin}
+      BC_INCLUDE_TEST_TOOLKIT: ${BC_INCLUDE_TEST_TOOLKIT:-true}
+      BC_MEMORY_LIMIT: ${BC_MEMORY_LIMIT:-8G}
+      BC_DNS: ${BC_DNS:-}
+      BC_API_REQUEST_LIMIT: ${BC_API_REQUEST_LIMIT:-50}
       SA_PASSWORD: ${SA_PASSWORD:-Passw0rd123!}
       BC_CLEAR_ALL_APPS: ${BC_CLEAR_ALL_APPS:-false}
       BC_SKIP_APP_PUBLISH: ${BC_SKIP_APP_PUBLISH:-false}
@@ -83,11 +95,11 @@ services:
       # Cronus license is used. No effect when unset.
       - ${BC_LICENSE_HOST_PATH:-/dev/null}:/bc/custom-license.bclicense:ro
     healthcheck:
-      test: test -f /tmp/bc-ready && curl -sf -o /dev/null -u BCRUNNER:Admin123! http://localhost:7048/BC/ODataV4/Company || exit 1
+      test: ["CMD", "/bc/scripts/healthcheck.sh"]
       # 5s interval (was 15s) so wait-for-bc-healthy.sh sees the transition within ~5s
-      # of the entrypoint touching /tmp/bc-ready. Saves ~10-15s of slack on every cold
-      # boot. The OData /Company probe is cheap; running it every 5s instead of every
-      # 15s during the start_period grace window adds negligible NST load.
+      # of the entrypoint touching /tmp/bc-ready. The probe verifies every
+      # published BC network surface: legacy management/client-services TCP plus
+      # SOAP, OData, API, DevServices, Management API, and WebClient HTTP.
       interval: 5s
       retries: 360            # 5s × 360 = 30 min after start_period (was 15s × 120)
       start_period: 60s

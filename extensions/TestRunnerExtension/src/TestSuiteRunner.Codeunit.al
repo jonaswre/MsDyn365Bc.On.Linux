@@ -1,9 +1,9 @@
 /// <summary>
 /// Wraps the MS Test Framework (codeunits 130450-130456) to run test codeunits
-/// using the proper AL Test Suite infrastructure with disabled isolation.
+/// using the proper AL Test Suite infrastructure with codeunit isolation.
 ///
-/// This replicates how BCApps CI runs tests via Run-TestsInBcContainer:
-/// - Uses codeunit 130451 (Test Runner - Isol. Disabled)
+/// This mirrors the standard non-interactive Business Central test runner flow:
+/// - Uses codeunit 130450 (Test Runner - Isol. Codeunit)
 /// - Populates Test Method Line via codeunit 130452 (Get Methods)
 /// - Supports disabling individual test methods
 /// - Results tracked in Test Method Line table
@@ -19,7 +19,7 @@ codeunit 99904 "Test Suite Runner"
     /// <summary>
     /// Initializes a test suite for running test codeunits.
     /// Creates the suite if it doesn't exist, clears previous results.
-    /// Sets the test runner to 130451 (disabled isolation).
+    /// Sets the test runner to 130450 (codeunit isolation).
     /// </summary>
     procedure InitSuite(Name: Code[10])
     var
@@ -31,10 +31,10 @@ codeunit 99904 "Test Suite Runner"
         if not ALTestSuite.Get(SuiteName) then begin
             ALTestSuite.Init();
             ALTestSuite.Name := SuiteName;
-            ALTestSuite."Test Runner Id" := 99903; // TestRunnerAPI — logs results to Log Table via OnAfterTestRun
+            ALTestSuite."Test Runner Id" := 130450; // Test Runner - Isol. Codeunit
             ALTestSuite.Insert(true);
         end else begin
-            ALTestSuite."Test Runner Id" := 99903;
+            ALTestSuite."Test Runner Id" := 130450;
             ALTestSuite.Modify(true);
         end;
 
@@ -45,7 +45,7 @@ codeunit 99904 "Test Suite Runner"
 
     /// <summary>
     /// Sets the suite name without clearing existing methods.
-    /// Used by the WS Test Runner page which manages its own lifecycle.
+    /// Used by API callers that manage their own suite lifecycle.
     /// </summary>
     procedure InitSuiteKeep(Name: Code[10])
     var
@@ -56,8 +56,11 @@ codeunit 99904 "Test Suite Runner"
         if not ALTestSuite.Get(SuiteName) then begin
             ALTestSuite.Init();
             ALTestSuite.Name := SuiteName;
-            ALTestSuite."Test Runner Id" := 130451;
+            ALTestSuite."Test Runner Id" := 130450;
             ALTestSuite.Insert(true);
+        end else begin
+            ALTestSuite."Test Runner Id" := 130450;
+            ALTestSuite.Modify(true);
         end;
     end;
 
@@ -95,6 +98,38 @@ codeunit 99904 "Test Suite Runner"
     end;
 
     /// <summary>
+    /// Adds all test codeunits that belong to an installed extension.
+    /// Uses Microsoft's non-interactive Test Suite Mgt. discovery path.
+    /// </summary>
+    procedure AddTestCodeunitsByExtension(ExtensionId: Text[36])
+    var
+        ALTestSuite: Record "AL Test Suite";
+        TestSuiteMgt: Codeunit "Test Suite Mgt.";
+    begin
+        ALTestSuite.Get(SuiteName);
+        TestSuiteMgt.SelectTestMethodsByExtension(ALTestSuite, ExtensionId);
+    end;
+
+    /// <summary>
+    /// Enables or disables code coverage for a suite.
+    /// </summary>
+    procedure SetCoverageEnabled(Name: Code[10]; Enabled: Boolean)
+    var
+        ALTestSuite: Record "AL Test Suite";
+        TestSuiteMgt: Codeunit "Test Suite Mgt.";
+        ALCodeCoverageMgt: Codeunit "AL Code Coverage Mgt.";
+    begin
+        ALTestSuite.Get(Name);
+        if Enabled then begin
+            TestSuiteMgt.SetCCTrackingType(ALTestSuite, ALTestSuite."CC Tracking Type"::"Per Codeunit");
+            TestSuiteMgt.SetCCTrackAllSessions(ALTestSuite, true);
+            TestSuiteMgt.SetCCMap(ALTestSuite, ALTestSuite."CC Coverage Map"::Disabled);
+            ALCodeCoverageMgt.Initialize(Name);
+        end else
+            TestSuiteMgt.SetCCTrackingType(ALTestSuite, ALTestSuite."CC Tracking Type"::Disabled);
+    end;
+
+    /// <summary>
     /// Disables a specific test method so it won't be executed.
     /// Matches BCApps DisabledTests/*.json behavior.
     /// </summary>
@@ -123,7 +158,7 @@ codeunit 99904 "Test Suite Runner"
     end;
 
     /// <summary>
-    /// Runs all enabled tests in the suite using codeunit 130451.
+    /// Runs all enabled tests in the suite using the configured isolated runner.
     /// Results are stored in Test Method Line records.
     /// </summary>
     procedure RunSuite(): Boolean
@@ -140,12 +175,8 @@ codeunit 99904 "Test Suite Runner"
         if not TestMethodLine.FindSet() then
             exit(true);
 
-        // Run each test codeunit in sequence — the runner is called once per codeunit
-        // and BC fires OnAfterTestRun for each test function within it.
-        repeat
-            Commit();
-            Codeunit.Run(ALTestSuite."Test Runner Id", TestMethodLine);
-        until TestMethodLine.Next() = 0;
+        Commit();
+        Codeunit.Run(ALTestSuite."Test Runner Id", TestMethodLine);
 
         exit(true);
     end;

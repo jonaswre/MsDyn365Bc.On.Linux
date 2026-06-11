@@ -15,6 +15,110 @@ log_step() {
     echo "[entrypoint] [${elapsed}s] $*"
 }
 
+sql_escape() {
+    printf "%s" "$1" | sed "s/'/''/g"
+}
+
+set_config_value() {
+    local config_file="$1"
+    local key="$2"
+    local value="$3"
+    if grep -q "${key}\" value=\"" "$config_file"; then
+        sed -i "s|${key}\" value=\"[^\"]*\"|${key}\" value=\"${value}\"|" "$config_file"
+    else
+        sed -i "/<\/appSettings>/i\\  <add key=\"${key}\" value=\"${value}\" />" "$config_file"
+    fi
+}
+
+start_tcp_proxy() {
+    local label="$1"
+    local listen_port="$2"
+    local target_port="$3"
+
+    if timeout 1 bash -c ":</dev/tcp/127.0.0.1/${listen_port}" 2>/dev/null; then
+        log_step "${label} port ${listen_port} is already listening"
+        return 0
+    fi
+
+    PROXY_LABEL="$label" PROXY_LISTEN_PORT="$listen_port" PROXY_TARGET_PORT="$target_port" python3 - <<'PY' &
+import os
+import errno
+import select
+import socket
+import threading
+
+LISTEN = ("0.0.0.0", int(os.environ["PROXY_LISTEN_PORT"]))
+TARGET = ("127.0.0.1", int(os.environ["PROXY_TARGET_PORT"]))
+
+
+def pump(source, target):
+    try:
+        while True:
+            ready, _, _ = select.select([source], [], [], 60)
+            if not ready:
+                continue
+            data = source.recv(65536)
+            if not data:
+                return
+            target.sendall(data)
+    except (OSError, ValueError):
+        return
+    finally:
+        for sock in (source, target):
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+
+def handle(client):
+    try:
+        upstream = socket.create_connection(TARGET, timeout=10)
+    except OSError:
+        client.close()
+        return
+    threading.Thread(target=pump, args=(client, upstream), daemon=True).start()
+    threading.Thread(target=pump, args=(upstream, client), daemon=True).start()
+
+
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    server.bind(LISTEN)
+except OSError as exc:
+    if exc.errno == errno.EADDRINUSE:
+        raise SystemExit(0)
+    raise
+server.listen(128)
+while True:
+    client, _ = server.accept()
+    threading.Thread(target=handle, args=(client,), daemon=True).start()
+PY
+    echo "$!" > "/tmp/bc-${label// /-}-${listen_port}-proxy.pid"
+
+    for _ in $(seq 1 20); do
+        if timeout 1 bash -c ":</dev/tcp/127.0.0.1/${listen_port}" 2>/dev/null; then
+            log_step "${label} compatibility listener ready on ${listen_port} -> ${target_port}"
+            return 0
+        fi
+        sleep 0.5
+    done
+
+    log_step "WARNING: ${label} compatibility listener did not start on ${listen_port}"
+}
+
+start_legacy_management_proxy() {
+    start_tcp_proxy "Legacy management" "7045" "7086"
+}
+
+start_client_services_alias_proxy() {
+    start_tcp_proxy "Client Services" "7046" "7085"
+}
+
 # Restore runtime DLLs from .bak if they exist (container restart recovery).
 # Patch #15 renames runtime DLLs AFTER BC loads them into memory.
 # On restart, BC needs the real DLLs to boot, so we restore first.
@@ -29,15 +133,33 @@ if [ -n "$RUNTIME_DIR" ]; then
     [ $RESTORE_COUNT -gt 0 ] && log_step "Restored $RESTORE_COUNT runtime DLLs from .bak (restart recovery)"
 fi
 
-BC_TYPE="${BC_TYPE:-sandbox}"
-BC_VERSION="${BC_VERSION:-27.5.46862.48004}"
+BC_TYPE="${BC_TYPE:-onprem}"
+BC_VERSION="${BC_VERSION:-latest}"
 BC_COUNTRY="${BC_COUNTRY:-w1}"
+ACCEPT_EULA="${ACCEPT_EULA:-Y}"
 SA_PASSWORD="${SA_PASSWORD:-Passw0rd123!}"
 BC_DB_PASSWORD="${BC_DB_PASSWORD:-Test1234}"
 BC_DB_USER="${BC_DB_USER:-bctest}"
+BC_USERNAME="${BC_USERNAME:-admin}"
+BC_PASSWORD="${BC_PASSWORD:-admin}"
+BC_AUTH="${BC_USERNAME}:${BC_PASSWORD}"
+BC_INCLUDE_TEST_TOOLKIT="${BC_INCLUDE_TEST_TOOLKIT:-true}"
+case "$(printf "%s" "$BC_INCLUDE_TEST_TOOLKIT" | tr '[:upper:]' '[:lower:]')" in
+    true|1|yes|y|on) BC_INCLUDE_TEST_TOOLKIT_ENABLED=true ;;
+    *) BC_INCLUDE_TEST_TOOLKIT_ENABLED=false ;;
+esac
+BC_API_REQUEST_LIMIT="${BC_API_REQUEST_LIMIT:-50}"
 SQL_SERVER="${SQL_SERVER:-sql}"
 ARTIFACTS="/bc/artifacts"
 SERVICE_DIR="/bc/service"
+
+case "$(printf "%s" "$ACCEPT_EULA" | tr '[:upper:]' '[:lower:]')" in
+    y|yes|true|1|on) ;;
+    *)
+        log_step "ERROR: set ACCEPT_EULA=Y to accept the Microsoft container EULA before starting BC"
+        exit 1
+        ;;
+esac
 
 # =============================================================================
 # Step 1: Download artifacts if not already present
@@ -120,15 +242,35 @@ if [ ! -f "$SERVICE_DIR/Microsoft.Dynamics.Nav.Server.dll" ]; then
         -e "s|DeveloperServicesEnabled\" value=\"[^\"]*\"|DeveloperServicesEnabled\" value=\"true\"|" \
         -e "s|TrustSQLServerCertificate\" value=\"[^\"]*\"|TrustSQLServerCertificate\" value=\"true\"|" \
         -e "s|ReportingServiceIsSideService\" value=\"[^\"]*\"|ReportingServiceIsSideService\" value=\"false\"|" \
-        -e "s|ClientServicesPort\" value=\"[^\"]*\"|ClientServicesPort\" value=\"7085\"|" \
-        -e "s|SOAPServicesPort\" value=\"[^\"]*\"|SOAPServicesPort\" value=\"7047\"|" \
-        -e "s|ODataServicesPort\" value=\"[^\"]*\"|ODataServicesPort\" value=\"7048\"|" \
-        -e "s|ManagementServicesPort\" value=\"[^\"]*\"|ManagementServicesPort\" value=\"7045\"|" \
-        -e "s|ManagementApiServicesPort\" value=\"[^\"]*\"|ManagementApiServicesPort\" value=\"7086\"|" \
-        -e "s|DeveloperServicesPort\" value=\"[^\"]*\"|DeveloperServicesPort\" value=\"7049\"|" \
         -e "s|ServerInstance\" value=\"[^\"]*\"|ServerInstance\" value=\"BC\"|" \
         -e "s|ExtensionAllowedTargetLevel\" value=\"[^\"]*\"|ExtensionAllowedTargetLevel\" value=\"OnPrem\"|" \
         "$CONFIG"
+    set_config_value "$CONFIG" "ClientServicesPort" "7085"
+    set_config_value "$CONFIG" "SOAPServicesPort" "7047"
+    set_config_value "$CONFIG" "ODataServicesPort" "7048"
+    set_config_value "$CONFIG" "ApiServicesPort" "7052"
+    set_config_value "$CONFIG" "ManagementServicesPort" "7045"
+    set_config_value "$CONFIG" "ManagementApiServicesPort" "7086"
+    set_config_value "$CONFIG" "DeveloperServicesPort" "7049"
+    if [[ "$BC_API_REQUEST_LIMIT" =~ ^[0-9]+$ ]] && [ "$BC_API_REQUEST_LIMIT" -gt 0 ]; then
+        set_config_value "$CONFIG" "ODataV4MaxConcurrentRequests" "$BC_API_REQUEST_LIMIT"
+        set_config_value "$CONFIG" "ODataMaxConcurrentRequestsPerUser" "$BC_API_REQUEST_LIMIT"
+        set_config_value "$CONFIG" "APIMaxConcurrentRequestsPerUser" "$BC_API_REQUEST_LIMIT"
+    fi
+
+    # The compose stack publishes the standard Business Central container
+    # network surface. Make the corresponding service flags explicit so
+    # artifact defaults cannot leave a published port without a listener.
+    for service_flag in \
+        ClientServicesEnabled \
+        SOAPServicesEnabled \
+        ODataServicesEnabled \
+        ApiServicesEnabled \
+        DeveloperServicesEnabled \
+        ManagementServicesEnabled \
+        ManagementApiServicesEnabled; do
+        set_config_value "$CONFIG" "$service_flag" "true"
+    done
 
     # Ensure TenantEnvironmentType=Sandbox (required for test automation at platform level)
     if grep -q "TenantEnvironmentType" "$CONFIG"; then
@@ -177,9 +319,13 @@ done
 # so the .NET loader finds libwin32_stubs.so for user32/kernel32/etc. directly.
 STUB_SO=$(find /bc/hook -name "libwin32_stubs.so" 2>/dev/null | head -1)
 if [ -n "$STUB_SO" ]; then
-    for winlib in user32 kernel32 advapi32 Wintrust wintrust nclcsrts dhcpcsvc Netapi32 netapi32 ntdsapi rpcrt4 httpapi gdiplus; do
-        ln -sf "$STUB_SO" "$SERVICE_DIR/${winlib}.dll" 2>/dev/null
+    for winlib in user32 kernel32 Kernel32 KernelBase api-ms-win-core-profile-l1-1-0 advapi32 Wintrust wintrust nclcsrts dhcpcsvc Netapi32 netapi32 ntdsapi rpcrt4 httpapi gdiplus; do
+        for variant in "$winlib" "${winlib}.so" "lib${winlib}.so" "${winlib}.dll" "${winlib}.dll.so" "lib${winlib}.dll.so" "lib${winlib}.dll"; do
+            ln -sf "$STUB_SO" "$SERVICE_DIR/$variant" 2>/dev/null
+            ln -sf "$STUB_SO" "/bc/hook/$variant" 2>/dev/null
+        done
     done
+    export LD_LIBRARY_PATH="$SERVICE_DIR:/bc/hook:${LD_LIBRARY_PATH:-}"
     log_step "Created Win32 DLL symlinks → libwin32_stubs.so"
 fi
 log_step "Step 2 (service tier setup): $(($(date +%s) - STEP2_START))s"
@@ -211,13 +357,18 @@ if [ -f /bc/patched/Mono.Cecil.dll ]; then
     log_step "Applied patched Mono.Cecil.dll (CheckFileName empty path fix)"
 fi
 
-# Patch TestPage support: fix assembly loading and async deadlock
+# Patch TestPage support and Linux service-tier differences hidden behind the same network surface
 # Nav.Ncl.dll: Assembly.Load (version-qualified) → Assembly.LoadFrom (file path)
 # TestPageClient.dll: CommunicationBroker Async=true → false (prevents dispatcher deadlock)
+# Nav.Ncl.dll: allow Microsoft test cleanup to delete the active BC user row
+# while keeping the standard container network test surface intact.
 if [ -f /bc/tools/patcher/PatchNclTestPage.dll ]; then
     PATCHER="dotnet /bc/tools/patcher/PatchNclTestPage.dll"
     if $PATCHER ncl "$SERVICE_DIR/Microsoft.Dynamics.Nav.Ncl.dll" 2>&1 | tail -1; then
         log_step "Patched Nav.Ncl.dll (TestPage Assembly.Load → LoadFrom)"
+    fi
+    if $PATCHER userdelete "$SERVICE_DIR/Microsoft.Dynamics.Nav.Ncl.dll" 2>&1 | tail -1; then
+        log_step "Patched Nav.Ncl.dll (active-session user delete parity)"
     fi
     if $PATCHER client "$SERVICE_DIR/Microsoft.Dynamics.Nav.Client.TestPageClient.dll" 2>&1 | tail -1; then
         log_step "Patched TestPageClient.dll (Async=true → false)"
@@ -475,7 +626,7 @@ SQLEOF
     # and wipe them so the install-for-tenant loop after NST starts can
     # republish them as proper Dev/tenant deployments.
     #
-    # Background: BC's sandbox image ships several test framework apps
+    # Background: BC artifacts can ship several test framework apps
     # (Test Runner, Library Assert, Library Variable Storage, Permissions
     # Mock, Any) in a "published as Global, not installed for tenant"
     # state. The dev endpoint forcesync POST cannot promote a published-
@@ -576,29 +727,56 @@ else
     DELETE FROM [NAV App Installed App] WHERE [Name] IN (N'Test Runner',N'Library Assert',N'Library Variable Storage',N'Permissions Mock',N'Any');
     DELETE FROM [Published Application] WHERE [Name] IN (N'Test Runner',N'Library Assert',N'Library Variable Storage',N'Permissions Mock',N'Any');
     " 2>/dev/null
-    log_step "Cleared test framework global entries (will re-publish via dev endpoint)"
+    if [ "$BC_INCLUDE_TEST_TOOLKIT_ENABLED" = "true" ]; then
+        log_step "Cleared test framework global entries (will re-publish via dev endpoint)"
+    else
+        log_step "BC_INCLUDE_TEST_TOOLKIT=false: cleared stock test framework entries"
+    fi
 fi
 
-# Service user for scripting/OData/dev endpoint (password hash for Admin123! with GUID 00000000-0000-0000-0000-000000000001)
-# Named BCRUNNER (not ADMIN) so tests can freely create/delete/disable an "ADMIN" user.
+# Service user for scripting/OData/dev endpoint.
+# Defaults to admin/admin for the standard container network surface, but
+# honors BC_USERNAME/BC_PASSWORD when callers need a dedicated service user.
 USER_GUID='00000000-0000-0000-0000-000000000001'
 PASSWORD_HASH='aXD91GRctWiXaqXeWbXhxQ==-V3'
+BC_USERNAME_SQL=$(sql_escape "$BC_USERNAME")
 $SQLCMD_DB -Q "
-IF NOT EXISTS (SELECT 1 FROM [User] WHERE [User Name] = 'BCRUNNER')
+IF EXISTS (SELECT 1 FROM [User] WHERE [User Security ID] = '$USER_GUID')
+BEGIN
+    UPDATE [User]
+    SET [User Name] = N'$BC_USERNAME_SQL', [Full Name] = N'$BC_USERNAME_SQL',
+        [State] = 0, [Expiry Date] = '2099-12-31',
+        [\$systemModifiedAt] = GETUTCDATE(), [\$systemModifiedBy] = '$USER_GUID'
+    WHERE [User Security ID] = '$USER_GUID';
+END
+ELSE
 BEGIN
     INSERT INTO [User] ([User Security ID], [User Name], [Full Name], [State], [Expiry Date],
         [Windows Security ID], [Change Password], [License Type], [Authentication Email],
         [Contact Email], [Exchange Identifier], [Application ID],
         [\$systemId], [\$systemCreatedAt], [\$systemCreatedBy], [\$systemModifiedAt], [\$systemModifiedBy])
-    VALUES ('$USER_GUID', N'BCRUNNER', N'BC Runner', 0, '2099-12-31', N'S-1-5-21-2074085148-119339936-2019613796-1001', 0, 0, N'', N'', N'',
+    VALUES ('$USER_GUID', N'$BC_USERNAME_SQL', N'$BC_USERNAME_SQL', 0, '2099-12-31', N'S-1-5-21-2074085148-119339936-2019613796-1001', 0, 0, N'', N'', N'',
         '00000000-0000-0000-0000-000000000000',
         NEWID(), GETUTCDATE(), '$USER_GUID', GETUTCDATE(), '$USER_GUID');
+END
+IF EXISTS (SELECT 1 FROM [User Property] WHERE [User Security ID] = '$USER_GUID')
+BEGIN
+    UPDATE [User Property]
+    SET [Password] = N'$PASSWORD_HASH', [Telemetry User ID] = '$USER_GUID',
+        [\$systemModifiedAt] = GETUTCDATE(), [\$systemModifiedBy] = '$USER_GUID'
+    WHERE [User Security ID] = '$USER_GUID';
+END
+ELSE
+BEGIN
     INSERT INTO [User Property] ([User Security ID], [Password], [Name Identifier],
         [Authentication Key], [WebServices Key], [WebServices Key Expiry Date],
         [Authentication Object ID], [Directory Role ID], [Telemetry User ID],
         [\$systemId], [\$systemCreatedAt], [\$systemCreatedBy], [\$systemModifiedAt], [\$systemModifiedBy])
     VALUES ('$USER_GUID', N'$PASSWORD_HASH', N'', N'', N'', '1753-01-01', N'', N'', '$USER_GUID',
         NEWID(), GETUTCDATE(), '$USER_GUID', GETUTCDATE(), '$USER_GUID');
+END
+IF NOT EXISTS (SELECT 1 FROM [Access Control] WHERE [User Security ID] = '$USER_GUID' AND [Role ID] = N'SUPER' AND [Company Name] = N'')
+BEGIN
     INSERT INTO [Access Control] ([User Security ID], [Role ID], [Company Name], [Scope], [App ID],
         [\$systemId], [\$systemCreatedAt], [\$systemCreatedBy], [\$systemModifiedAt], [\$systemModifiedBy])
     VALUES ('$USER_GUID', N'SUPER', N'', 0, '00000000-0000-0000-0000-000000000000',
@@ -607,7 +785,6 @@ END
 " 2>/dev/null
 
 # Background SUPER user — safety net so tests can freely disable/delete users
-# without violating the "at least one enabled SUPER user" platform constraint.
 # without violating the "at least one enabled SUPER user" platform constraint.
 # This user has no password and is never used for authentication.
 SVC_GUID='00000000-0000-0000-0000-000000000002'
@@ -633,7 +810,7 @@ BEGIN
         NEWID(), GETUTCDATE(), '$SVC_GUID', GETUTCDATE(), '$SVC_GUID');
 END
 " 2>/dev/null
-log_step "Database ready (BCRUNNER / Admin123!). Step 3 (DB setup): $(($(date +%s) - STEP3_START))s"
+log_step "Database ready (${BC_USERNAME}). Step 3 (DB setup): $(($(date +%s) - STEP3_START))s"
 
 # =============================================================================
 # Step 4: Start BC server in background, publish test runner, then wait
@@ -789,8 +966,39 @@ exec 3>/tmp/bc-stdin
     set +e
 
     INSTANCE=$(grep -oP 'ServerInstance" value="\K[^"]+' $SERVICE_DIR/CustomSettings.config 2>/dev/null || echo "BC")
-    DEV_URL="http://localhost:7049"
+    DEV_URL="http://localhost:7049/BC/dev"
     NST_WAIT_START=$(date +%s)
+
+    publish_required_app() {
+        local app_path="$1"
+        local mode="$2"
+        local label="$3"
+        local timeout="${4:-120}"
+        local body
+        body=$(mktemp)
+        local http
+        http=$(curl -s -o "$body" -w "%{http_code}" --max-time "$timeout" \
+            -u "$BC_AUTH" -X POST \
+            -F "file=@$app_path;type=application/octet-stream" \
+            "$DEV_URL/apps?SchemaUpdateMode=$mode" 2>/dev/null)
+
+        if [ "$http" = "200" ] || [ "$http" = "201" ] || [ "$http" = "204" ]; then
+            echo "[entrypoint]   $label: HTTP $http"
+            rm -f "$body"
+            return 0
+        fi
+
+        if [ "$http" = "422" ] && grep -qiE "already (deployed|installed|published)" "$body"; then
+            echo "[entrypoint]   $label: HTTP $http (already deployed — skip)"
+            rm -f "$body"
+            return 0
+        fi
+
+        echo "[entrypoint] ERROR: required publish failed for $label (HTTP $http)"
+        sed 's/^/[entrypoint]   /' "$body"
+        rm -f "$body"
+        return 1
+    }
 
     echo "[entrypoint] [$(( $(date +%s) - ENTRYPOINT_START ))s] Waiting for BC to start..."
     for i in $(seq 1 180); do
@@ -968,7 +1176,7 @@ PYEOF
                 fi
 
                 HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 300 \
-                    -u "BCRUNNER:Admin123!" -X POST \
+                    -u "$BC_AUTH" -X POST \
                     -F "file=@$APP_FILE;type=application/octet-stream" \
                     "$DEV_URL/apps?SchemaUpdateMode=forcesync" 2>/dev/null)
                 echo "[entrypoint]   $APP_NAME $APP_VER: HTTP $HTTP"
@@ -986,7 +1194,7 @@ PYEOF
 
         # Install-for-tenant pass. The selective filter (lines 391-453)
         # preserves keep-set apps in [Published Application] but BC's
-        # default sandbox install leaves test framework apps in a
+        # default artifact install can leave test framework apps in a
         # published-but-not-installed-for-tenant state. We need an
         # explicit "install for tenant" step or downstream publishes
         # fail with "the referenced dependencies ... published as Global
@@ -1013,7 +1221,7 @@ PYEOF
             #   3. Emits absolute paths in dep-first (post-order) order
             #
             # Skips the application stack baseline ids — they're already
-            # installed for the tenant by BC's sandbox setup, re-POSTing
+            # installed for the tenant by BC's default setup, re-POSTing
             # them is wasteful and slow.
             #
             # Tried client-side parallelization within dependency layers
@@ -1072,11 +1280,11 @@ PYEOF
                 # tenant deps), so we have to wipe stuck-published apps in
                 # SQL beforehand instead.
                 HTTP=$(curl -s -o /tmp/install-tenant.out -w "%{http_code}" --max-time 120 \
-                    -u "BCRUNNER:Admin123!" -X POST \
+                    -u "$BC_AUTH" -X POST \
                     -F "file=@$APP_PATH;type=application/octet-stream" \
                     "$DEV_URL/apps?SchemaUpdateMode=synchronize" 2>/dev/null)
                 # Treat "already deployed as Global" 422s as benign — they
-                # mean the app was pre-installed by BC's sandbox image and
+                # mean the app was pre-installed by the BC artifact and
                 # doesn't need a republish.
                 if [ "$HTTP" = "200" ] || [ "$HTTP" = "204" ]; then
                     echo "[entrypoint]   $NAME: HTTP $HTTP"
@@ -1092,10 +1300,10 @@ PYEOF
 
         # Default flow: republish the test framework apps that were wiped
         # from SQL (lines 573-579) plus test toolkit apps that aren't in
-        # the sandbox DB but are needed by most real test apps.
+        # the default database but are needed by most real test apps.
         # The selective/keep-set path above handles this when BC_KEEP_APP_IDS
         # is set; this block covers the interactive / Codespace case.
-        if [ -z "${BC_KEEP_APP_IDS:-}" ]; then
+        if [ "$BC_INCLUDE_TEST_TOOLKIT_ENABLED" = "true" ] && [ -z "${BC_KEEP_APP_IDS:-}" ]; then
             echo "[entrypoint] Publishing test toolkit apps (default flow)..."
             TF_INSTALL_ORDER=$(python3 - "$ARTIFACTS" << 'PYEOF'
 import sys
@@ -1103,10 +1311,12 @@ sys.path.insert(0, "/bc/scripts")
 from _bcapp import load_artifact_apps
 apps = load_artifact_apps(sys.argv[1])
 # Core test framework (wiped from SQL, need republish) + test toolkit
-# apps that aren't in the sandbox DB but most test apps depend on.
+# apps that aren't in the default database but most test apps depend on.
+# Test Runner is installed later from /bc/testrunner/MicrosoftTestRunnerPatched.app
+# so the wrapper can access internal coverage APIs.
 # This list rarely changes — last change was ~5 years ago.
 NAMES = {
-    "Test Runner", "Library Assert", "Library Variable Storage",
+    "Library Assert", "Library Variable Storage",
     "Permissions Mock", "Any",
     "System Application Test Library", "Business Foundation Test Libraries",
     "Tests-TestLibraries",
@@ -1136,18 +1346,14 @@ PYEOF
             while IFS= read -r APP_PATH; do
                 [ -z "$APP_PATH" ] && continue
                 NAME=$(basename "$APP_PATH")
-                HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 120 \
-                    -u "BCRUNNER:Admin123!" -X POST \
-                    -F "file=@$APP_PATH;type=application/octet-stream" \
-                    "$DEV_URL/apps?SchemaUpdateMode=synchronize" 2>/dev/null)
-                echo "[entrypoint]   $NAME: HTTP $HTTP"
+                publish_required_app "$APP_PATH" "synchronize" "$NAME" 120 || exit 1
             done <<< "$TF_INSTALL_ORDER"
         fi
 
         # Publish additional test app dependencies (e.g. System App Test Library, Tests-TestLibraries)
         # and the actual test app (e.g. Tests-SINGLESERVER) if BC_TEST_APPS is set.
         # BC_TEST_APPS is a semicolon-separated list of .app file paths.
-        if [ -n "${BC_TEST_APPS:-}" ]; then
+        if [ "$BC_INCLUDE_TEST_TOOLKIT_ENABLED" = "true" ] && [ -n "${BC_TEST_APPS:-}" ]; then
             echo "[entrypoint] Publishing test app dependencies..."
             IFS=';' read -ra TEST_APPS <<< "$BC_TEST_APPS"
             for app in "${TEST_APPS[@]}"; do
@@ -1158,25 +1364,38 @@ PYEOF
                     continue
                 fi
                 NAME=$(basename "$app")
-                HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 600 \
-                    -u "BCRUNNER:Admin123!" -X POST \
-                    -F "file=@$app;type=application/octet-stream" \
-                    "$DEV_URL/apps?SchemaUpdateMode=forcesync" 2>/dev/null)
-                echo "[entrypoint]   $NAME: HTTP $HTTP"
+                publish_required_app "$app" "forcesync" "$NAME" 600 || exit 1
             done
         fi
 
+        # Publish patched Microsoft Test Runner first. The patch grants the
+        # wrapper extension access to the internal code coverage manager so the
+        # container can expose the standard network test coverage surface.
+        if [ "$BC_INCLUDE_TEST_TOOLKIT_ENABLED" = "true" ] && [ -f /bc/testrunner/MicrosoftTestRunnerPatched.app ]; then
+            echo "[entrypoint] Publishing patched Microsoft Test Runner..."
+            publish_required_app "/bc/testrunner/MicrosoftTestRunnerPatched.app" \
+                "forcesync" "Patched Microsoft Test Runner" 60 || exit 1
+        elif [ "$BC_INCLUDE_TEST_TOOLKIT_ENABLED" = "true" ]; then
+            echo "[entrypoint] ERROR: /bc/testrunner/MicrosoftTestRunnerPatched.app is missing"
+            exit 1
+        fi
+
         # Publish our TestRunner Extension (custom API for test execution, depends on MS Test Runner)
-        if [ -f /bc/testrunner/TestRunner.app ]; then
+        if [ "$BC_INCLUDE_TEST_TOOLKIT_ENABLED" = "true" ] && [ -f /bc/testrunner/TestRunner.app ]; then
             echo "[entrypoint] Publishing Test Runner Extension..."
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 \
-                -u "BCRUNNER:Admin123!" -X POST \
-                -F "file=@/bc/testrunner/TestRunner.app;type=application/octet-stream" \
-                "$DEV_URL/apps?SchemaUpdateMode=synchronize" 2>&1)
-            echo "[entrypoint] Test Runner Extension: HTTP $HTTP_CODE"
+            publish_required_app "/bc/testrunner/TestRunner.app" \
+                "synchronize" "Test Runner Extension" 30 || exit 1
+        elif [ "$BC_INCLUDE_TEST_TOOLKIT_ENABLED" = "true" ]; then
+            echo "[entrypoint] ERROR: /bc/testrunner/TestRunner.app is missing"
+            exit 1
+        fi
+        if [ "$BC_INCLUDE_TEST_TOOLKIT_ENABLED" != "true" ]; then
+            echo "[entrypoint] BC_INCLUDE_TEST_TOOLKIT=false: skipped test toolkit and Test Runner publishing"
         fi
     fi
     TOTAL_ELAPSED=$(( $(date +%s) - ENTRYPOINT_START ))
+    start_legacy_management_proxy
+    start_client_services_alias_proxy
     echo "[entrypoint] [${TOTAL_ELAPSED}s] Ready for extensions. Total startup: ${TOTAL_ELAPSED}s"
     touch /tmp/bc-ready
 ) &

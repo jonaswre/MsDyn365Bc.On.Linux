@@ -1,6 +1,6 @@
 /// <summary>
 /// API page exposing Test Method Line results for OData reading.
-/// Used by the WebSocket test runner to read results after test execution.
+/// Used by network API callers to read results after test execution.
 /// </summary>
 page 99906 "Test Results API"
 {

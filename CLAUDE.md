@@ -41,7 +41,7 @@ Multiple parallel instances: use `-p <project>` with a unique port offset for ev
 ./scripts/run-tests.sh --app MyTestApp.app --codeunit-range 50000
 ```
 
-`run-tests.sh` is a hybrid OData (suite population + result reading) + WebSocket (test execution via a real client session) flow. The WebSocket step is required because TestPage support needs a `serviceConnection`-style session, which OData can't provide. The test runner extension is in `extensions/TestRunnerExtension/` (AL source under `src/`); the prebuilt `.app` is baked into the image and republished automatically on container start.
+`run-tests.sh` is a network OData/API flow for suite population, codeunit execution, and result reading. It deliberately mirrors the public Business Central container surface: a host process with only HTTP access to the exposed BC ports can publish and test without `docker exec`. The test runner extension is in `extensions/TestRunnerExtension/` (AL source under `src/`); the prebuilt `.app` is baked into the image and republished automatically on container start.
 
 ### Editing the startup hook
 
@@ -59,7 +59,7 @@ docker compose build bc && docker compose up -d --wait
 
 ### Layers
 
-1. **`docker-compose.yml`** — two services (`sql`, `bc`). SQL uses a tmpfs for `/var/opt/mssql/data` (4 GB) so first-boot DB restore is fast; the cost is that DB state is wiped on container restart. The `bc` service depends on `sql` being healthy and exposes the dev/OData/API/SOAP/client ports (7045–7089 range).
+1. **`docker-compose.yml`** — two services (`sql`, `bc`). SQL uses a tmpfs for `/var/opt/mssql/data` (4 GB) so first-boot DB restore is fast; the cost is that DB state is wiped on container restart. The `bc` service depends on `sql` being healthy and exposes the standard BC service ports for management, SOAP, OData, API, dev services, Management API, and WebClient/client services.
 
 2. **`src/Dockerfile`** — multi-stage. Builder publishes `StartupHook`, the various stubs (`DrawingStub`, `GenevaStub`, `HttpSysStub`, `PerfCounterStub`, `WindowsPrincipalStub`), and the helper tools (`MergeNetstandard`, `PatchNclTestPage`); also copies the .NET 8 reference assemblies out of the SDK into `/bc/refasm/` (Cecil needs them for type-forward resolution). Runtime stage installs `mssql-tools18` and sets `DOTNET_STARTUP_HOOKS=/bc/hook/StartupHook.dll`.
 
@@ -79,9 +79,9 @@ docker compose build bc && docker compose up -d --wait
    - **#19, #20**: Reporting Service. The Windows PE binary is replaced with `stubs/reporting-service-stub` (Linux .NET), and `CustomReportingServiceClient` is swapped for a no-op so the watchdog stops flooding the log.
    - **#21**: `NavOpenTaskPageAction.ShowForm` no-op — without it, a single test that opens a task page kills the entire test session.
 
-5. **`extensions/TestRunnerExtension/`** — AL extension (`src/*.al`) exposing the OData/WebSocket pages used by `run-tests.sh`. The compiled `.app` lives in the same dir and is copied into the image at build time (`extensions/TestRunnerExtension/TestRunnerExtension.app` → `/bc/testrunner/TestRunner.app`).
+5. **`extensions/TestRunnerExtension/`** — AL extension (`src/*.al`) exposing the custom OData/API pages used by `run-tests.sh` and external tools. The compiled `.app` lives in the same dir and is copied into the image at build time (`extensions/TestRunnerExtension/TestRunnerExtension.app` -> `/bc/testrunner/TestRunner.app`). The patched Microsoft Test Runner app is copied alongside it and published first so the wrapper can use the same internal coverage/test-suite APIs as the Windows test stack.
 
-6. **`tools/TestRunner/`** (host-side) and **`src/tools/{MergeNetstandard,PatchNclTestPage}/`** (image-side) — small .NET helpers. `MergeNetstandard` merges netstandard type-forwarding assemblies for Cecil; `PatchNclTestPage` is the disk-side counterpart to a few of the in-memory hook patches.
+6. **`src/tools/{MergeNetstandard,PatchNclTestPage}/`** (image-side) — small .NET helpers. `MergeNetstandard` merges netstandard type-forwarding assemblies for Cecil; `PatchNclTestPage` is the disk-side counterpart to a few of the in-memory hook patches.
 
 ### Key invariants worth remembering
 
@@ -92,8 +92,8 @@ docker compose build bc && docker compose up -d --wait
 
 ### Known limitations (see `KNOWN-LIMITATIONS.md`)
 
-- ~142 test failures from "User cannot be deleted because logged on" — Microsoft test cleanup deletes the session user; only fixable by patching the platform "user is logged on" check.
-- ~29+ failures from `NSClientCallback.CreateDotNetHandle` NullRef on tests that need a UI session (Camera, Barcode, etc.).
+- The historical ~142 "User cannot be deleted because logged on" failures are fixed by the Nav.Ncl `userdelete` patch in `PatchNclTestPage`.
+- The historical ~29+ `NSClientCallback.CreateDotNetHandle` NullRef failures are fixed by StartupHook Patch #24, which returns a dummy client DotNet handle in headless sessions.
 - Bucket 4 sequential test run previously crashed the container after Tests-Misc due to infinite recursion in Microsoft's `OfficeWordDocumentPictureMerger.ReplaceMissingImageWithTransparentImage` (stack overflow in `Nav.OpenXml`, triggered by `TestSendToEMailAndPDFVendor`). **Fixed by Patch #23** — `ReplaceMissingImageWithTransparentImage` is no-op'd via JMP hook so missing images are left in place and the session survives.
 
 When adding a new patch, append it to the numbered list in the `StartupHook.cs` header comment AND `KNOWN-LIMITATIONS.md` if it closes a known failure mode.
@@ -134,7 +134,7 @@ during the bring-up debugging session. The workflow → entrypoint contract:
    - **Stuck-publish wipe** (immediately after): runs a SQL query
      against `[Published Application]` joined with `[NAV App Installed App]`
      and discovers any apps that are PUBLISHED but NOT INSTALLED for any
-     tenant. These are the apps that ship in BC's sandbox image as
+     tenant. These are apps that can ship in BC artifacts as
      "Global, not installed for default tenant" — historically the 5
      core test framework apps (Test Runner, Library Assert, Library
      Variable Storage, Permissions Mock, Any), but the discovery is
@@ -198,16 +198,17 @@ hardened. Don't undo them without understanding why they exist.
 - **`TESTS_TOTAL == 0` is a hard failure.** Both workflows now
   fail explicitly when no tests ran, instead of accepting empty
   results as success.
-- **`run-tests.sh` always passes `--verbose` to TestRunner.dll.**
-  Without it, every `Log()` call inside TestRunner is silent and
-  failures look like "exit 1 with no diagnostic." See the comment
-  block at the docker-exec invocation for why.
+- **`run-tests.sh` runs through the published BC network surface.** Setup,
+  execution, result reading, and optional JUnit generation must keep working
+  from a host process with only HTTP access to the exposed BC ports. Do not add
+  a test execution dependency on `docker exec`, container-local files, or a
+  host-side runner binary.
 - **`verify_suite_populated` must filter by `lineType eq 'Function'`,
   not just count any row.** setupSuite inserts a Codeunit-type stub
   row even when the test app's metadata isn't loaded; only Function
   rows prove that real `[Test]` procedures are enumerable.
 - **`build-image.yml`'s `IMAGE_NAME` MUST match what consumers pull**
-  (`stefanmaron/msdyn365bc.on.linux/bc-runner`). In an earlier state
+  (`jonaswre/msdyn365bc.on.linux/bc-runner`). In an earlier state
   it was `stefanmaron/bc-runner` and every entrypoint fix went into
   an image namespace nobody used. The mismatch was invisible for
   weeks. Don't move this without auditing every consumer's
@@ -215,9 +216,9 @@ hardened. Don't undo them without understanding why they exist.
 
 ## JUnit XML test result emission
 
-`tools/TestRunner/Program.cs` accepts `--junit-output <path>` and writes a
-JUnit-compliant XML file to that path after the run finishes. `run-tests.sh`
-exposes the same flag. The reusable workflows
+`run-tests.sh` accepts `--junit-output <path>` and writes a
+JUnit-compliant XML file to that path from the API `testResults` response
+after the run finishes. The reusable workflows
 (`bc-test-from-source.yml`, `bc-test-prebuilt.yml`) always emit per-app
 JUnit at `build/junit-<test-app-basename>.xml` and upload it as the
 `junit-test-results` workflow artifact (no opt-in needed).
@@ -236,24 +237,15 @@ AL call stack in the body. Skipped tests use `<skipped/>`.
   `testResults?$filter=lineType eq 'Function'` against a live container.
   As a result, `JUnitWriter.Write` uses `Codeunit {id}` as the
   `<testsuite name>` and `<testcase classname>`. **Don't try to "fix"
-  it by adding `funcs[0]["name"]` back** — you'll re-introduce the bug
+  it by adding `funcs[0]["name"]` back** - you'll re-introduce the bug
   where every classname looks like a function name. If you want the
   human-readable codeunit name in the JUnit output, the right fix is
   to do a separate OData query for the Codeunit-type row before
   emitting, or extend `TestResultsAPI.Page.al` to expose a
   `codeunitName` field.
-- **The TestRunner.dll is baked into the bc-runner image.** A change to
-  `Program.cs` requires `docker compose build bc` for `run-tests.sh`'s
-  `docker compose exec` path to pick it up. The host-side `dotnet run`
-  fallback path picks up source changes automatically, but most
-  CI/local users go through the docker exec path.
-- **`docker compose cp` is used to extract the XML from the container.**
-  TestRunner runs inside the bc service container, writes to
-  `/tmp/junit-result.xml` (a fixed in-container path), and `run-tests.sh`
-  copies it back to the caller-supplied host path. This avoids needing
-  to bind-mount the destination path into the container — important
-  because the destination path is consumer-controlled and may not exist
-  at container start time.
+- **JUnit output is host-side.** The shell script writes the XML directly
+  to the caller-supplied path from the JSON API response. Do not re-add
+  container copy or bind-mount behavior for test results.
 
 ## Custom license override (ISV / developer license)
 
@@ -349,10 +341,10 @@ What this means in practice when working in bc-linux:
 
 - **Most of the "real workload" feedback comes from that repo's benchmark scripts** (`PipelinePerformanceComparison/scripts/benchmark-bucket4.sh`, `benchmark-erm-scm.sh`, `diag-*.sh`). When a patch in `StartupHook.cs` is added or changed, the validation that matters is "does the BCApps / Base App test sweep still pass at the same rate?", run from there.
 - **Test results, crash logs, and benchmark output live under `PipelinePerformanceComparison/benchmark-results/`** (e.g. the Bucket 4 Word-merger crash referenced in `KNOWN-LIMITATIONS.md` was captured in `benchmark-results/local-20260404/bucket4-local-full.log`). When investigating a regression, look there before re-running anything locally.
-- **The test runner architecture (OData setup + WebSocket execution + OData result read) was driven by what BCApps needed** — TestPage support, real client sessions, callback protocol. Patches #17–#22 in `StartupHook.cs` and the `Nav.Ncl` / `Nav.Types` / `TestPageClient` binary patches in `entrypoint.sh` exist specifically to make Microsoft's stock test apps run unmodified. See `PipelinePerformanceComparison/LINUX-BC-STRATEGY.md` for the canonical history.
+- **The current test runner architecture is network-only.** Older experiments used a WebSocket execution leg for TestPage/session behavior, but the supported public surface now keeps setup, execution, result reads, and coverage over published BC HTTP endpoints. The current startup-hook patch set and the `Nav.Ncl` / `Nav.Types` / `TestPageClient` binary patches in `entrypoint.sh` still exist specifically to make Microsoft's stock test apps run unmodified. See `PipelinePerformanceComparison/LINUX-BC-STRATEGY.md` for the canonical history.
 - **The `BASE-APP-TEST-HOWTO.md` over there is the recipe** for publishing the System Application Test Library, Base App tests, etc. against a bc-linux container — useful when reproducing a Microsoft-test-only failure that doesn't show up with a custom test app.
 
-If you change behavior here that could plausibly affect test execution (anything touching the test runner extension, the WebSocket session lifecycle, the Cecil/AL compiler patches, or anything that runs during test method execution), check whether the corresponding benchmark scripts in PipelinePerformanceComparison need a re-run, and update the relevant report there if results shift.
+If you change behavior here that could plausibly affect test execution (anything touching the test runner extension, the test runner session lifecycle, the Cecil/AL compiler patches, or anything that runs during test method execution), check whether the corresponding benchmark scripts in PipelinePerformanceComparison need a re-run, and update the relevant report there if results shift.
 
 ## Relationship to `bc-copilot-blueprint`
 
@@ -395,7 +387,7 @@ The bc-linux project ships **three** reusable workflows in
   wait-for-bc-healthy.sh) for free.
 
 `build-image.yml` builds and publishes the bc-runner image to
-`ghcr.io/stefanmaron/msdyn365bc.on.linux/bc-runner` on every push
+`ghcr.io/jonaswre/msdyn365bc.on.linux/bc-runner` on every push
 that touches `src/`, `scripts/`, or `extensions/`. Both
 `build-image.yml` and `test-versions.yml`'s inline build job share
 registry layer cache via the same `:cache` tag.

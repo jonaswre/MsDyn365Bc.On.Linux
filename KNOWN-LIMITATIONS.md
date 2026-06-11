@@ -1,6 +1,11 @@
-# Known Test Limitations on BC Linux
+# Known Business Central Container Test Limitations
 
-## "User cannot be deleted because logged on" (~142 failures in SINGLESERVER)
+## ~~"User cannot be deleted because logged on" (~142 failures in SINGLESERVER)~~ (FIXED)
+
+**Status**: Fixed by the `userdelete` Nav.Ncl patch applied during startup.
+The patch skips the active-session throw in
+`SystemTableTriggers.OnBeforeDeleteAsync` and then continues with the remaining
+user-delete validation.
 
 **Root cause**: Microsoft's test cleanup code does broad `User.DeleteAll()` or
 `User.FindFirst(); User.Delete()` without filtering out the session user. BC's
@@ -14,22 +19,23 @@ codeunit isolation rollback can't help.
 - `UserAccessinSaaSTests.Initialize()` — `User.DeleteAll(true)` unfiltered
 - `DocumentApprovalDocuments` teardown — explicitly targets `UserId()` for cleanup
 
-**Why this works on Windows**: Microsoft containers use Windows Auth where the OS
-identity is separate from the BC User table. Tests can delete the BC "ADMIN" user
-because the Windows service account keeps the session alive independently.
+**Historical platform difference**: Microsoft containers usually authenticate
+through an OS identity that is separate from the BC User table, while this image
+uses the configured NavUserPassword user for the network surface. Before the
+`userdelete` patch, Microsoft cleanup code could hit the active-session guard
+when deleting the current BC user. The patched image skips only that guard so
+the test cleanup path behaves like the standard container test surface.
 
-**On Linux**: Our BCRUNNER user is the session user AND the User table record.
-The platform blocks deletion of any user with an active session.
+**Impact on benchmarks (historical)**: These failures happened during
+setup/teardown, not during the actual test logic. Tests that failed early ran
+faster than they would on Windows, slightly skewing timing comparisons for
+affected codeunits.
 
-**Impact on benchmarks**: These failures happen during setup/teardown, not during
-the actual test logic. Tests that fail early (in setup) run faster than they would
-on Windows, slightly skewing timing comparisons for affected codeunits.
+## ~~"NullReferenceException in NSClientCallback.CreateDotNetHandle" (~29+ failures)~~ (FIXED)
 
-**Potential fix**: Patch the .NET platform check that validates "user is logged on"
-to skip the constraint. Not implemented — would require finding the exact method
-in Nav.Ncl or Nav.Server that performs this check.
-
-## "NullReferenceException in NSClientCallback.CreateDotNetHandle" (~29+ failures)
+**Status**: Fixed by StartupHook Patch #24. Headless client-side DotNet handle
+creation now returns a dummy `NavAutomationHandle` instead of aborting the
+session when no UI client exists.
 
 **Root cause**: Tests that use .NET controls requiring a UI context (Camera,
 Barcode Scanner, etc.) crash because the headless test runner has no client UI
@@ -39,10 +45,10 @@ NullReferenceException when there's no UI session.
 **Example**: `Camera Page Impl.` (CU 1908) `.IsAvailable` → crashes any test
 that opens a page with a Camera control.
 
-**Potential fix**: Patch `NSClientCallback.CreateDotNetHandle` in Nav.Service to
-return a dummy handle (or null) instead of crashing. Similar approach to the
-existing `NavOpenTaskPageAction.ShowForm` no-op (Patch #21). Would turn crashes
-into graceful no-ops where the DotNet control simply isn't available.
+**Fix**: Patch `NSClientCallback.CreateDotNetHandle` in Nav.Service and
+`HeadlessClientCallback.CreateDotNetHandle` in Nav.Ncl to return a dummy
+automation handle. This turns crashes into graceful no-ops where the DotNet
+control is unavailable.
 
 ## ~~Container crash after Tests-Misc in sequential Bucket 4 runs~~ (FIXED — Patch #23)
 

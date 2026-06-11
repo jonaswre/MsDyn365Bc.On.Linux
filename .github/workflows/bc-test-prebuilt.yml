@@ -1,7 +1,7 @@
 name: BC test (prebuilt) [reusable]
 
 # Reusable workflow that publishes pre-built .app files from the calling
-# repo to a Business Central NST running on Linux and executes the AL tests.
+# repo to a Business Central container and executes the AL tests.
 # No compile step. Use this when you build .app files in a separate workflow,
 # commit them to the repo, or get them from a vendor.
 #
@@ -11,9 +11,9 @@ name: BC test (prebuilt) [reusable]
 #   on: [push, pull_request, workflow_dispatch]
 #   jobs:
 #     test:
-#       uses: StefanMaron/MsDyn365Bc.On.Linux/.github/workflows/bc-test-prebuilt.yml@master
+#       uses: jonaswre/MsDyn365Bc.On.Linux/.github/workflows/bc-test-prebuilt.yml@master
 #       with:
-#         bc_version:     "27.5"
+#         bc_version:     "latest"
 #         test_app_files: "tests/MyTests.app"
 #         codeunit_range: "50000..99999"
 #
@@ -23,20 +23,30 @@ on:
   workflow_call:
     inputs:
       bc_version:
-        description: "BC platform version (e.g. 27.5)"
+        description: "BC platform version (e.g. latest, 28.1, or 28.1.49838.49886)"
         required: false
         type: string
-        default: "27.5"
+        default: "latest"
       bc_country:
         description: "BC country code (e.g. w1, de, us)"
         required: false
         type: string
         default: "w1"
       bc_type:
-        description: "BC artifact type (sandbox or onprem)"
+        description: "BC artifact type (onprem or sandbox)"
         required: false
         type: string
-        default: "sandbox"
+        default: "onprem"
+      bc_username:
+        description: "NavUserPassword username for OData/API/Dev/WebClient access"
+        required: false
+        type: string
+        default: "admin"
+      bc_password:
+        description: "NavUserPassword password for OData/API/Dev/WebClient access"
+        required: false
+        type: string
+        default: "admin"
       app_files:
         description: "Space-separated paths to production .app files (relative to your repo root)"
         required: false
@@ -61,9 +71,14 @@ on:
         description: "Override the bc-runner image (defaults to the public ghcr.io tag)"
         required: false
         type: string
-        default: "ghcr.io/stefanmaron/msdyn365bc.on.linux/bc-runner:latest"
+        default: "ghcr.io/jonaswre/msdyn365bc.on.linux/bc-runner:latest"
+      runtime_ref:
+        description: "Git ref of the Business Central runtime to check out for scripts"
+        required: false
+        type: string
+        default: ""
       bc_linux_ref:
-        description: "Git ref of StefanMaron/MsDyn365Bc.On.Linux to check out for scripts"
+        description: "Deprecated alias for runtime_ref"
         required: false
         type: string
         default: "master"
@@ -81,7 +96,7 @@ on:
           workspace, mounts it into the bc-runner + sql containers, and the
           entrypoint imports it BEFORE NST starts — eliminating the legacy
           boot/import/restart cycle that ISVs would otherwise need.
-          See README.md "Custom license" section in the bc-linux repo for
+          See README.md "Custom license" section in this repo for
           how to prepare the secret and pass it from the caller workflow.
         required: false
 
@@ -94,6 +109,8 @@ jobs:
       BC_VERSION: ${{ inputs.bc_version }}
       BC_COUNTRY: ${{ inputs.bc_country }}
       BC_TYPE: ${{ inputs.bc_type }}
+      BC_USERNAME: ${{ inputs.bc_username }}
+      BC_PASSWORD: ${{ inputs.bc_password }}
 
     steps:
       - name: Checkout your repo
@@ -101,15 +118,15 @@ jobs:
         with:
           path: project
 
-      - name: Checkout MsDyn365Bc.On.Linux
+      - name: Checkout Business Central runtime
         uses: actions/checkout@v4
         with:
-          repository: StefanMaron/MsDyn365Bc.On.Linux
-          ref: ${{ inputs.bc_linux_ref }}
-          path: bc-linux
+          repository: jonaswre/MsDyn365Bc.On.Linux
+          ref: ${{ inputs.runtime_ref != '' && inputs.runtime_ref || inputs.bc_linux_ref }}
+          path: bc-runtime
 
       - name: Initialize timing
-        run: bash bc-linux/scripts/workflow-summary.sh init
+        run: bash bc-runtime/scripts/workflow-summary.sh init
 
       # Artifact download + docker pull in parallel (independent network IO).
       - name: Download BC artifacts + pull docker images (parallel)
@@ -118,16 +135,16 @@ jobs:
           BC_ARTIFACTS_DIR: ${{ github.workspace }}/artifact-cache/${{ inputs.bc_version }}
         run: |
           set -e
-          bash bc-linux/scripts/workflow-summary.sh begin DOWNLOAD "Download BC artifacts + pull docker images"
+          bash bc-runtime/scripts/workflow-summary.sh begin DOWNLOAD "Download BC artifacts + pull docker images"
           mkdir -p "artifact-cache/$BC_VERSION"
           (
-            bc-linux/scripts/download-artifacts.sh \
+            bc-runtime/scripts/download-artifacts.sh \
               "$BC_TYPE" "$BC_VERSION" "$BC_COUNTRY" \
               "$PWD/artifact-cache/$BC_VERSION"
           ) &
           ARTIFACT_PID=$!
           (
-            cd bc-linux
+            cd bc-runtime
             for attempt in 1 2 3 4 5; do
               if docker compose pull --quiet; then break; fi
               echo "docker compose pull failed (attempt $attempt/5); retrying in 15s..."
@@ -137,35 +154,35 @@ jobs:
           PULL_PID=$!
           wait $ARTIFACT_PID || { echo "artifact download failed"; exit 1; }
           wait $PULL_PID     || { echo "docker pull failed"; exit 1; }
-          bash bc-linux/scripts/workflow-summary.sh end DOWNLOAD
+          bash bc-runtime/scripts/workflow-summary.sh end DOWNLOAD
 
       - name: Resolve apps to keep in BC database
         env:
           APP_FILES: ${{ inputs.app_files }}
           TEST_APP_FILES: ${{ inputs.test_app_files }}
         run: |
-          bash bc-linux/scripts/workflow-summary.sh begin RESOLVE "Resolve apps to keep"
-          # Walk the consumer's .app files (not source dirs) AND bc-linux's
+          bash bc-runtime/scripts/workflow-summary.sh begin RESOLVE "Resolve apps to keep"
+          # Walk the consumer's .app files (not source dirs) AND this repo's
           # custom Test Runner Extension app.json for dependencies, then
           # keep the 5-app baseline + the full transitive closure.
           # The TestRunnerExtension app.json is included so its declared
           # dep on Microsoft Test Runner gets walked into the closure
           # (otherwise the selective filter wipes Test Runner and the
           # entrypoint's TestRunnerExtension publish fails AL1024).
-          ARGS="--app-json bc-linux/extensions/TestRunnerExtension/app.json"
+          ARGS="--app-json bc-runtime/extensions/TestRunnerExtension/app.json"
           for f in $APP_FILES $TEST_APP_FILES; do
             [ -z "$f" ] && continue
             if [ -f "project/$f" ]; then
               ARGS="$ARGS --app-file project/$f"
             fi
           done
-          KEEP_IDS=$(python3 bc-linux/scripts/resolve-keep-app-ids.py \
+          KEEP_IDS=$(python3 bc-runtime/scripts/resolve-keep-app-ids.py \
             $ARGS \
             --artifact-dir "artifact-cache/$BC_VERSION")
           echo "Resolved keep set: $KEEP_IDS"
           echo "BC_CLEAR_ALL_APPS=selective" >> "$GITHUB_ENV"
           echo "BC_KEEP_APP_IDS=$KEEP_IDS" >> "$GITHUB_ENV"
-          bash bc-linux/scripts/workflow-summary.sh end RESOLVE
+          bash bc-runtime/scripts/workflow-summary.sh end RESOLVE
 
       # Stage the optional ISV license. When the consumer passed `bc_license`
       # in the secrets: block, decode the base64 blob to a tempfile and export
@@ -198,30 +215,31 @@ jobs:
       # No compile in prebuilt mode, so there's nothing CPU-bound to overlap
       # with BC startup — but we still kick off in the background to allow
       # the eventual workflow-summary phase tracking to be cleaner.
-      - name: Start BC on Linux (background)
+      - name: Start Business Central container (background)
         env:
           BC_ARTIFACTS_DIR: ${{ github.workspace }}/artifact-cache/${{ inputs.bc_version }}
-        working-directory: bc-linux
+        working-directory: bc-runtime
         run: |
           bash scripts/workflow-summary.sh begin BC_BOOT "BC startup (background → wait for healthy)"
           docker compose up -d
           echo "BC container started in background — continuing with other work."
 
       - name: Wait for BC healthy
-        working-directory: bc-linux
+        working-directory: bc-runtime
         run: |
           ./scripts/wait-for-bc-healthy.sh 30
+          ./scripts/verify-network-surface.sh
           bash scripts/workflow-summary.sh end BC_BOOT
 
       - name: Publish .app files
         env:
-          AUTH: "BCRUNNER:Admin123!"
+          AUTH: "${{ inputs.bc_username }}:${{ inputs.bc_password }}"
           DEV: "http://localhost:7049/BC/dev"
           APP_FILES: ${{ inputs.app_files }}
           TEST_APP_FILES: ${{ inputs.test_app_files }}
         run: |
           set -e
-          bash bc-linux/scripts/workflow-summary.sh begin PUBLISH "Publish .app files"
+          bash bc-runtime/scripts/workflow-summary.sh begin PUBLISH "Publish .app files"
           # Source the canonical publish helper. Previously this step had
           # its own inline publish_app that treated EVERY 422 as success
           # and silently swallowed missing-dependency / schema-sync errors,
@@ -231,7 +249,7 @@ jobs:
           # "already". See the bc-copilot-blueprint debugging session
           # for the full story.
           # shellcheck disable=SC1091
-          . bc-linux/scripts/publish-app.sh
+          . bc-runtime/scripts/publish-app.sh
           PUBLISHED_COUNT=0
           for app in $APP_FILES; do
             [ -z "$app" ] && continue
@@ -249,13 +267,14 @@ jobs:
             bc_publish_app "$full" "$DEV" "$AUTH" || exit 1
             PUBLISHED_COUNT=$((PUBLISHED_COUNT + 1))
           done
-          bash bc-linux/scripts/workflow-summary.sh count apps_published "$PUBLISHED_COUNT"
-          bash bc-linux/scripts/workflow-summary.sh end PUBLISH
+          bash bc-runtime/scripts/workflow-summary.sh count apps_published "$PUBLISHED_COUNT"
+          bash bc-runtime/scripts/workflow-summary.sh end PUBLISH
 
       - name: Run AL tests
-        working-directory: bc-linux
+        working-directory: bc-runtime
         env:
           TEST_APP_FILES: ${{ inputs.test_app_files }}
+          AUTH: "${{ inputs.bc_username }}:${{ inputs.bc_password }}"
         run: |
           set -e
           bash scripts/workflow-summary.sh begin TESTS "Run AL tests"
@@ -271,6 +290,7 @@ jobs:
             tmplog=$(mktemp)
             ./scripts/run-tests.sh \
               --app "../project/$app" \
+              --auth "$AUTH" \
               --codeunit-range "${{ inputs.codeunit_range }}" \
               --junit-output "$junit_file" \
               --timeout 30 2>&1 | tee "$tmplog"
@@ -280,11 +300,17 @@ jobs:
               echo "ERROR: run-tests.sh exited with code $RUN_TESTS_RC for $base"
               ANY_TEST_FAILED=1
             fi
-            line=$(grep -oE '[0-9]+ total, [0-9]+ passed, [0-9]+ failed' "$tmplog" | tail -1 || true)
+            line=$(grep -oE 'total=[0-9]+ passed=[0-9]+ failed=[0-9]+|[0-9]+ total, [0-9]+ passed, [0-9]+ failed' "$tmplog" | tail -1 || true)
             if [ -n "$line" ]; then
-              t=$(echo "$line" | grep -oE '^[0-9]+')
-              p=$(echo "$line" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+')
-              f=$(echo "$line" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+')
+              if [[ "$line" == total=* ]]; then
+                t=$(echo "$line" | sed -n 's/.*total=\([0-9][0-9]*\).*/\1/p')
+                p=$(echo "$line" | sed -n 's/.*passed=\([0-9][0-9]*\).*/\1/p')
+                f=$(echo "$line" | sed -n 's/.*failed=\([0-9][0-9]*\).*/\1/p')
+              else
+                t=$(echo "$line" | grep -oE '^[0-9]+')
+                p=$(echo "$line" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+')
+                f=$(echo "$line" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+')
+              fi
               TESTS_TOTAL=$((TESTS_TOTAL + ${t:-0}))
               TESTS_PASSED=$((TESTS_PASSED + ${p:-0}))
               TESTS_FAILED=$((TESTS_FAILED + ${f:-0}))
@@ -336,9 +362,9 @@ jobs:
         env:
           JOB_STATUS: ${{ job.status }}
           BC_TELEMETRY_OPT_OUT: ${{ vars.BC_TELEMETRY_OPT_OUT || 'false' }}
-        run: bash bc-linux/scripts/workflow-summary.sh emit
+        run: bash bc-runtime/scripts/workflow-summary.sh emit
 
       - name: BC logs (on failure)
         if: failure()
-        working-directory: bc-linux
+        working-directory: bc-runtime
         run: docker compose logs bc | tail -200

@@ -79,6 +79,57 @@ int FindStringOrdinal(uint32_t flags, const void* src, int srcCount,
     return -1; // not found
 }
 
+int CompareStringW(uint32_t locale, uint32_t flags, const uint16_t* s1, int cch1,
+                   const uint16_t* s2, int cch2) {
+    if (s1 == s2) return 2; // CSTR_EQUAL
+    if (s1 == 0) return 1;  // CSTR_LESS_THAN
+    if (s2 == 0) return 3;  // CSTR_GREATER_THAN
+
+    int i = 0;
+    while ((cch1 < 0 || i < cch1) && (cch2 < 0 || i < cch2)) {
+        uint16_t c1 = s1[i];
+        uint16_t c2 = s2[i];
+        if (cch1 < 0 && c1 == 0) return (cch2 < 0 && c2 == 0) ? 2 : 1;
+        if (cch2 < 0 && c2 == 0) return 3;
+        if (c1 < c2) return 1;
+        if (c1 > c2) return 3;
+        i++;
+    }
+    if (cch1 >= 0 && cch2 >= 0) {
+        if (cch1 == cch2) return 2;
+        return cch1 < cch2 ? 1 : 3;
+    }
+    return 2;
+}
+
+int CompareStringA(uint32_t locale, uint32_t flags, const char* s1, int cch1,
+                   const char* s2, int cch2) {
+    if (s1 == s2) return 2; // CSTR_EQUAL
+    if (s1 == 0) return 1;  // CSTR_LESS_THAN
+    if (s2 == 0) return 3;  // CSTR_GREATER_THAN
+
+    int i = 0;
+    while ((cch1 < 0 || i < cch1) && (cch2 < 0 || i < cch2)) {
+        unsigned char c1 = (unsigned char)s1[i];
+        unsigned char c2 = (unsigned char)s2[i];
+        if (cch1 < 0 && c1 == 0) return (cch2 < 0 && c2 == 0) ? 2 : 1;
+        if (cch2 < 0 && c2 == 0) return 3;
+        if (c1 < c2) return 1;
+        if (c1 > c2) return 3;
+        i++;
+    }
+    if (cch1 >= 0 && cch2 >= 0) {
+        if (cch1 == cch2) return 2;
+        return cch1 < cch2 ? 1 : 3;
+    }
+    return 2;
+}
+
+int CompareString(uint32_t locale, uint32_t flags, const uint16_t* s1, int cch1,
+                  const uint16_t* s2, int cch2) {
+    return CompareStringW(locale, flags, s1, cch1, s2, cch2);
+}
+
 // --- Locale functions ---
 int LCIDToLocaleName(uint32_t locale, void* localeName, int localeNameSize, int flags) {
     // Return empty string (0 chars written) — BC will fall back to invariant culture

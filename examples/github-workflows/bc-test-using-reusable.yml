@@ -1,7 +1,7 @@
 name: BC Tests
 
 # Tiny consumer workflow that delegates to a reusable workflow hosted in
-# StefanMaron/MsDyn365Bc.On.Linux. Copy this file into your repo at
+# jonaswre/MsDyn365Bc.On.Linux. Copy this file into your repo at
 # .github/workflows/bc-test.yml, edit the `with:` block, commit, push.
 #
 # Two flavours are available, pick whichever fits:
@@ -21,9 +21,9 @@ on:
 
 jobs:
   bc-tests:
-    uses: StefanMaron/MsDyn365Bc.On.Linux/.github/workflows/bc-test-from-source.yml@master
+    uses: jonaswre/MsDyn365Bc.On.Linux/.github/workflows/bc-test-from-source.yml@master
     with:
-      bc_version:     "27.5"
+      bc_version:     "latest"
       bc_country:     "w1"
       app_dirs:       "app"          # space-separated dirs containing app.json
       test_app_dirs:  "test"         # ditto for test apps
@@ -39,7 +39,7 @@ jobs:
       # "Could not load", BadImageFormatException, PlatformNotSupportedException),
       # so a misconfigured cop can never produce a silently green build.
       #
-      # See ANALYZER-SUPPORT-PLAN.md in the bc-linux repo for the full
+      # See ANALYZER-SUPPORT-PLAN.md in the runtime repo for the full
       # list of gotchas (JSON-only rulesets, /enableexternalrulesets
       # requirement, ALCops.Common.dll co-load, etc.).
       #
@@ -81,9 +81,9 @@ jobs:
   # ─── Prebuilt flavour example (commented out) ─────────────────────────
   #
   # bc-tests-prebuilt:
-  #   uses: StefanMaron/MsDyn365Bc.On.Linux/.github/workflows/bc-test-prebuilt.yml@master
+  #   uses: jonaswre/MsDyn365Bc.On.Linux/.github/workflows/bc-test-prebuilt.yml@master
   #   with:
-  #     bc_version:     "27.5"
+  #     bc_version:     "latest"
   #     test_app_files: "tests/MyTests.app"
   #     # See above for the accepted codeunit_range formats.
   #     codeunit_range: "50000..99999"

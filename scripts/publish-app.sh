@@ -5,7 +5,7 @@
 #
 #   . "$REPO_DIR/scripts/publish-app.sh"
 #   bc_publish_app /path/to/myapp.app
-#   bc_publish_app /path/to/myapp.app "http://localhost:7049/BC/dev" "BCRUNNER:Admin123!"
+#   bc_publish_app /path/to/myapp.app "http://localhost:7049/BC/dev" "${BC_USERNAME:-admin}:${BC_PASSWORD:-admin}"
 #
 # Returns 0 on success — meaning either:
 #   - HTTP 200 (fresh publish completed), or
@@ -25,7 +25,7 @@
 bc_publish_app() {
     local app="$1"
     local dev_url="${2:-http://localhost:7049/BC/dev}"
-    local auth="${3:-BCRUNNER:Admin123!}"
+    local auth="${3:-${BC_USERNAME:-admin}:${BC_PASSWORD:-admin}}"
 
     if [ -z "$app" ]; then
         echo "bc_publish_app: missing required argument: <app-path>" >&2
