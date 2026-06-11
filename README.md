@@ -54,12 +54,18 @@ Just to start BC and run AL tests:
 - ~4 GB RAM (2 GB SQL + 1-2 GB BC)
 - ~3 GB disk for artifacts (downloaded once, cached in Docker volumes)
 
+Running on an Apple Silicon Mac (podman + Rosetta)? See [MacOS.md](MacOS.md)
+for the extra setup steps and the `docker-compose.macos.yml` overlay.
+
 That's it — **no .NET SDK on the host is required** for the normal container
 surface. Providers and tools should treat the container like a Business Central
 container: publish over dev services, talk to OData/API over HTTP, and run
 tests through the exposed Client Services/WebClient or OData/API automation
-endpoints. `scripts/run-tests.sh` is a repository helper for local diagnostics
-and CI.
+endpoints. The WebSocket test runner used by `run-tests.sh` is bundled inside
+the bc-runner image and invoked via `docker compose exec`, so all the .NET work
+happens in the container. If `run-tests.sh` is pointed at a remote BC instead
+of a local docker, it falls back to `dotnet run` from the host source; that
+fallback path needs the .NET 8 SDK.
 
 **Optional — only if you want to compile AL projects from the command line**
 without using the VS Code AL extension's F5 build:
