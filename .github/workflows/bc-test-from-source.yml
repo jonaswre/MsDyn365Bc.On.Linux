@@ -76,6 +76,29 @@ on:
         required: false
         type: string
         default: ""
+      test_runner:
+        description: >-
+          Test execution engine. "websocket" (default) = the OData suite +
+          WebSocket client-session flow (scripts/run-tests.sh) — works on
+          every supported BC version. "altool" = EXPERIMENTAL: the AL dotnet
+          tool's native `al runtests` command driving the NST's built-in
+          /dev/TestRunnerHub SignalR hub (scripts/run-tests-altool.py).
+          Requires BC 28.0+ (the hub / Dev API 7.0 doesn't exist in 27.x).
+          Note: altool runs tests WITHOUT an AL test runner codeunit — AI
+          tests are unsupported and isolation comes from the
+          RequiredTestIsolation property (default Codeunit).
+        required: false
+        type: string
+        default: "websocket"
+      altool_version:
+        description: >-
+          Version of the Microsoft.Dynamics.BusinessCentral.Development.Tools
+          dotnet tool used when test_runner=altool. Must be a version that
+          ships the `runtests` command — as of 2026-06 that's only the 18.x
+          prereleases (stable 17.x has publishapp but no runtests).
+        required: false
+        type: string
+        default: "18.0.37.11445-beta"
       runner_image:
         description: "Override the bc-runner image (defaults to the public ghcr.io tag)"
         required: false
@@ -396,6 +419,36 @@ jobs:
           echo "AL compiler ready: $AL_TOOL_DIR"
           bash bc-linux/scripts/workflow-summary.sh end AL_INSTALL
 
+      # ─── Experimental altool test runner (BC 28+) ────────────────────
+      # Installs the cross-platform Microsoft.Dynamics.BusinessCentral.
+      # Development.Tools dotnet tool whose `al runtests` command drives
+      # the NST's built-in /dev/TestRunnerHub SignalR hub. This is a
+      # DIFFERENT package from the .Linux compiler package above (that one
+      # only compiles). The hub requires Dev API 7.0, which only ships
+      # with BC 28.0+ — fail fast here on older versions instead of
+      # timing out at test time.
+      - name: Install AL dotnet tool (altool test runner)
+        if: inputs.test_runner == 'altool'
+        run: |
+          set -e
+          BC_MAJOR=$(echo "${{ inputs.bc_version }}" | cut -d. -f1)
+          if [ "$BC_MAJOR" -lt 28 ]; then
+            echo "ERROR: test_runner=altool requires BC 28.0+ — the server-side"
+            echo "       /dev/TestRunnerHub (Dev API 7.0) does not exist in BC ${BC_MAJOR}.x."
+            echo "       Use the default test_runner=websocket for this version."
+            exit 1
+          fi
+          dotnet tool install -g Microsoft.Dynamics.BusinessCentral.Development.Tools \
+            --version "${{ inputs.altool_version }}" \
+          || dotnet tool update -g Microsoft.Dynamics.BusinessCentral.Development.Tools \
+            --version "${{ inputs.altool_version }}"
+          # The tool registers the lowercase `al` command. The AL compiler
+          # install step above may create an UPPERCASE `AL` wrapper for the
+          # compile path — the test step invokes this one by absolute path
+          # ($HOME/.dotnet/tools/al) so there's no case-collision ambiguity.
+          "$HOME/.dotnet/tools/al" runtests --help >/dev/null
+          echo "altool test runner ready: $("$HOME/.dotnet/tools/al" --version)"
+
       - name: Stage symbols from BC artifacts
         env:
           APP_DIRS: ${{ inputs.app_dirs }}
@@ -675,11 +728,24 @@ jobs:
             echo "=== Running tests in $base ==="
             # Capture output so we can parse the totals for telemetry.
             tmplog=$(mktemp)
-            ./scripts/run-tests.sh \
-              --app "$app" \
-              --codeunit-range "${{ inputs.codeunit_range }}" \
-              --junit-output "$junit_file" \
-              --timeout 30 2>&1 | tee "$tmplog"
+            if [ "${{ inputs.test_runner }}" = "altool" ]; then
+              # EXPERIMENTAL (BC 28+): native `al runtests` against the
+              # NST's /dev/TestRunnerHub. The script prints the same
+              # "N total, P passed, F failed" and "Test codeunits:" lines
+              # as run-tests.sh, so the parsing below works for both.
+              python3 scripts/run-tests-altool.py \
+                --app "$app" \
+                --codeunit-range "${{ inputs.codeunit_range }}" \
+                --junit-output "$junit_file" \
+                --altool-cmd "$HOME/.dotnet/tools/al" \
+                --timeout 30 2>&1 | tee "$tmplog"
+            else
+              ./scripts/run-tests.sh \
+                --app "$app" \
+                --codeunit-range "${{ inputs.codeunit_range }}" \
+                --junit-output "$junit_file" \
+                --timeout 30 2>&1 | tee "$tmplog"
+            fi
             RUN_TESTS_RC=${PIPESTATUS[0]}
             if [ "$RUN_TESTS_RC" -ne 0 ]; then
               echo "ERROR: run-tests.sh exited with code $RUN_TESTS_RC for $base"
