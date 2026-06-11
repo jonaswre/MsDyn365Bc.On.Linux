@@ -122,6 +122,13 @@ jobs:
       # up here. Equivalent to the legacy "70000..70001" but covers the new
       # code path. See scripts/run-tests.sh CODEUNIT_RANGE handling.
       codeunit_range: "70000|70001"
+      # test_runner is left at its default ("auto"): each leg probes the
+      # live server's dev endpoint and uses `al runtests` (the AL dotnet
+      # tool's native runner driving the NST's /dev/TestRunnerHub) when
+      # Dev API 7.0+ is advertised — BC 28.0+ — falling back to the
+      # OData+WebSocket runner on older versions. See
+      # scripts/run-tests-altool.py for the altool path's limitations
+      # (no AL test runner codeunit, prerelease-only CLI, etc.).
       # Use the selected repository tag from build-image (latest) because
       # test-versions does not publish images.
       runner_image: ${{ needs.build-image.outputs.runner_image }}
