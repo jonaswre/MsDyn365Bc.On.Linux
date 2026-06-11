@@ -1,6 +1,8 @@
 # Web Client on Linux — Proof of Concept
 
-**Status: WORKING.** Microsoft's real Business Central web client
+**Status: WORKING — intended as a dev convenience tool** (spin up a
+container on Linux/macOS and do basic testing through the browser UI), not
+a production deployment target. Microsoft's real Business Central web client
 (`Prod.Client.WebCoreApp`, ASP.NET Core / .NET 8) runs self-hosted on Kestrel
 inside the bc container, pointed at the Linux NST, and is fully usable from a
 real browser: sign-in, role center with live CRONUS data, list pages, and
@@ -122,6 +124,31 @@ streaming) are completely invisible.
   creation, metadata, and data all flow through the same 7085 channel the
   test runner uses.
 
+## Additionally verified (dev-tool bar)
+
+The intended audience is developers spinning up a container on Linux/macOS
+to do basic testing through the web client. Verified beyond the milestones:
+
+- **Writes round-trip.** Editing a field on the Customer Card
+  (`?page=21&mode=Edit`), tabbing out, reloading in a fresh session: the
+  value persisted through the NST into SQL. Reverted afterwards.
+- **Direct URL navigation** works: `/?page=22` (list), `/?page=21`,
+  `&mode=Edit` — the navigation style devs actually use.
+- **Crash recovery.** The entrypoint supervises the process with a simple
+  restart loop; `kill -9` on the web client brought it back automatically
+  within seconds (`[entrypoint] web client exited (rc=137) — restarting`).
+- **Container restart** re-stages nothing (staged copy persists in the
+  container's writable layer) and the web client comes back on its own.
+- **macOS**: the `docker-compose.macos.yml` overlay only adjusts SQL; the
+  web client inherits the same config and port mapping, so
+  `BC_WEBCLIENT=1 docker compose -f docker-compose.yml -f docker-compose.macos.yml up -d --wait`
+  is expected to work identically under Rosetta (same linux/amd64 image as
+  the NST; not separately exercised on Apple hardware).
+
+Note the web client comes up ~20–40s *after* the container reports healthy
+(the healthcheck gates only the NST, intentionally) — if `:8080` refuses
+connections right after `--wait` returns, give it a moment.
+
 ## Known gaps / not validated
 
 - `GET /splashCheck` 404s (harmless; splash screen still renders).
@@ -133,23 +160,13 @@ streaming) are completely invisible.
 - Untested surface: reports/printing, file upload/download, designer,
   multi-user/multi-session behavior, OAuth/AAD auth modes, Teams/Office
   add-in hosts, DataProtection key persistence across restarts (sessions die
-  on container restart; antiforgery/auth cookies reset).
-- The web client process is not health-checked or auto-restarted.
+  on container restart; antiforgery/auth cookies reset — devs just sign in
+  again).
 - `Resources\ExtractedResources` extraction (tenant media etc.) works via
   the W2 hook but has only been exercised lightly.
 
-## Effort estimate to "production-ready"
-
-The hard part — proving the real web server runs against the Linux NST and
-serves a working UI — is done and was cheaper than expected (5 hook patches,
-2 one-line stub changes, config/symlink fixes). Remaining effort:
-
-- **Hardening the happy path** (reports, attachments, media upload, session
-  lifecycle, restarts, health-check + supervisor for the process): ~1–2
-  weeks of focused work, mostly more instances of the same backslash/EventLog
-  patch patterns.
-- **CI coverage** (a Playwright smoke job in `test-versions.yml` doing
-  sign-in → role center → list): ~1–2 days.
-- **Multi-version support** (27.x layout/behavior differences): unknown,
-  likely small; the artifact layout discovery in `start-webclient.sh` is
-  already version-agnostic.
+These are acceptable for the stated goal (basic dev testing through the
+UI). If one of them starts to matter, the fix pattern is almost always
+another instance of W1–W5: find the throwing call with
+`WEBCLIENT_DEBUG_FIRSTCHANCE=1`, then either a JMP hook, a backslash
+normalization, or a case-fix symlink.

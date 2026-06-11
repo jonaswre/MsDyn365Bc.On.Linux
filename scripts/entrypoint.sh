@@ -1182,9 +1182,17 @@ PYEOF
 
     # Opt-in web client PoC: self-host Microsoft's Prod.Client.WebCoreApp on
     # Kestrel, pointed at this NST. EXPERIMENTAL — see docs/WEBCLIENT-POC.md.
+    # Supervised with a simple restart loop: this is a dev convenience tool,
+    # so a crash should self-heal rather than require a docker exec.
     if [ "${BC_WEBCLIENT:-0}" = "1" ]; then
         echo "[entrypoint] BC_WEBCLIENT=1: starting web client on port ${BC_WEBCLIENT_PORT:-8080} (log: /tmp/webclient.log)"
-        /bc/scripts/start-webclient.sh > /tmp/webclient.log 2>&1 &
+        (
+            while true; do
+                /bc/scripts/start-webclient.sh >> /tmp/webclient.log 2>&1
+                echo "[entrypoint] web client exited (rc=$?) — restarting in 3s"
+                sleep 3
+            done
+        ) &
     fi
 ) &
 
