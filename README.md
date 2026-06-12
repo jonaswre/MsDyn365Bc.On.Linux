@@ -169,6 +169,13 @@ printing, and file upload are untested. Details: [docs/WEBCLIENT-POC.md](docs/WE
    extension uses the `launch.json` settings to publish via the dev
    endpoint and open the configured startup page.
 
+5. **Debugging works** — breakpoints, call stack, variables, watch,
+   stepping, both `launch` and `attach` (`"request": "attach"` with
+   `"breakOnNext": "WebClient"` pairs nicely with `BC_WEBCLIENT=1` to
+   debug code triggered from the browser). Requires StartupHook Patch
+   #25 (included). Details and verified configs:
+   [docs/DEBUGGING.md](docs/DEBUGGING.md).
+
 ---
 
 ## Command-line workflow

@@ -47,6 +47,10 @@ mkdir -p "$WEBCLIENT_DIR/wwwroot/Resources/ExtractedResources" \
 done)
 # BrandProvider enumerates "Resources/Brand/..." but the artifact ships "brand"
 [ -e "$WEBCLIENT_DIR/wwwroot/Resources/Brand" ] || ln -s brand "$WEBCLIENT_DIR/wwwroot/Resources/Brand"
+# The FluentUI icon-font CSS requests "Resources/Fonts/fluentui/fabric-icons-*.woff"
+# but the artifact ships "Resources/fonts/" — without this every glyph icon in the
+# UI (action bar, chevrons, system tray) is missing.
+[ -e "$WEBCLIENT_DIR/wwwroot/Resources/Fonts" ] || ln -s fonts "$WEBCLIENT_DIR/wwwroot/Resources/Fonts"
 
 # Point the web client at the local NST (NavUserPassword over ws://localhost:7085)
 python3 - "$WEBCLIENT_DIR" "$PORT" <<'PYEOF'

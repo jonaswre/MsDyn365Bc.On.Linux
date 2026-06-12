@@ -37,6 +37,17 @@ docker compose exec bc tail -f /tmp/webclient.log
 The host port is `${BC_WEBCLIENT_PORT:-8080}`. Everything is additive and
 opt-in: with `BC_WEBCLIENT` unset, nothing about the NST boot path changes.
 
+When `BC_WEBCLIENT=1`, the entrypoint also sets the NST's `PublicWebBaseUrl`
+to `http://localhost:${BC_WEBCLIENT_PORT:-8080}/` (override with
+`BC_WEBCLIENT_PUBLIC_URL` when the host-published port differs, e.g. parallel
+instances). This is what the dev endpoint's `webEndpoint` field advertises —
+the AL debugger's launch mode (F5) uses it to open the browser at the right
+URL with the `debuggingcontext` parameter (see `docs/DEBUGGING.md`). Note the
+AL extension caches this in `ServerInfoCache.dat` next to its host binary; if
+F5 keeps opening a port-less `http://localhost/?page=...` URL after enabling
+the web client on an existing setup, delete that file (or restart VS Code's
+AL services) to force a re-read.
+
 ## Architecture
 
 ```
@@ -71,6 +82,7 @@ browser ──HTTP/WS (/csh, JSON-RPC)──▶ Prod.Client.WebCoreApp (Kestrel,
 | `mkdir wwwroot/Resources/ExtractedResources`, `Thumbnails`, `Resources/images/static`, `Reports` | Startup check throws `DirectoryNotFoundException` if missing (the Windows MSI creates them) |
 | Lowercase symlinks in `wwwroot/js/` (`boot.js` → `Boot.js`, …) | The boot view reads script files by lowercased name; Linux is case-sensitive |
 | `wwwroot/Resources/Brand` → `brand` symlink | `BrandProvider` enumerates `Resources/Brand/...`; artifact ships `brand` |
+| `wwwroot/Resources/Fonts` → `fonts` symlink | The FluentUI icon-font CSS requests `Resources/Fonts/fluentui/fabric-icons-*.woff`; artifact ships `fonts`. Without it every glyph icon (action bar, chevrons, system tray) 404s and renders blank |
 | `DOTNET_TieredCompilation=0` | **Critical.** JMP hooks get silently overwritten by Tier-1 recompilation — same invariant as the NST. Symptom was maddening: the EventLog patch worked at startup, then minutes later the original code came back and the first session-level log write killed the session thread |
 | `HTTPSYS_STUB_INJECT_IDENTITY=0` | See stub changes below |
 | `DOTNET_STARTUP_HOOKS=/bc/webclient-hook/WebClientHook.dll` | Replaces the NST hook for this process |
@@ -190,6 +202,31 @@ connections right after `--wait` returns, give it a moment.
 
 ## Known gaps / not validated
 
+- **AL debugger launch mode (F5) session binding is unreliable.** Opening a
+  URL with the `debuggingcontext` query parameter (what F5 generates) forces
+  a re-sign-in, and the web client's session creation then usually dies in
+  `ConnectionEstablisher.OpenWebSocket → PromptForCredentials()` with
+  `NavCancelCredentialPromptException` (logged in `/tmp/webclient.log`), drops
+  the debug parameters, and lands on the role center without binding the
+  debugger. The full cycle (bind → break → stack → variables) was observed
+  working once, so the NST side is fine — the gap is in the web client's
+  credential flow for debug-bound sessions. Attach mode (`breakOnNext`) is
+  unaffected and fully working; see `docs/DEBUGGING.md`.
+- **Record images (Customer/Item/Contact pictures, user avatars) don't
+  render.** The picture control requests
+  `/img?sessionid=...&ts=<mediaGuid>_360x0.` and gets a 404; the
+  `Thumbnails` cache directory stays empty. The serving path
+  (`WebImageHelper.TryLoadMediaThumbnail` →
+  `LogicalMediaProvider.ProvideMediaThumbnail` →
+  `mediaProvider.LoadMediaThumbnail`, then
+  `WebImageHelper.TryGetWebCompatibleImage`) uses **System.Drawing.Common**
+  (`ImageControl.TryLoadImage`, `Image.FromStream`), which throws
+  `PlatformNotSupportedException` unconditionally on Linux in .NET 8 —
+  the web client ships the real Windows-only package. A likely fix is a
+  WebClientHook patch that replaces `TryGetWebCompatibleImage` /
+  `TryLoadImage` with magic-byte content-type sniffing (no actual GDI
+  decode is needed just to serve the bytes), but this is not done yet.
+  Static images (action icons, placeholders, brand assets) are unaffected.
 - `GET /splashCheck` 404s (harmless; splash screen still renders).
 - A stray literal-backslash directory (`wwwroot/Reports\`) appears at
   startup — some path producer outside `FilePersistenceManager` still uses
