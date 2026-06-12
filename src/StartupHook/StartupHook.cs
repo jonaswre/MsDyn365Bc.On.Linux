@@ -73,6 +73,14 @@ using System.Threading.Tasks;
 ///   Fix: hook the canonical id→zone resolver to substitute custom fixed-offset zones
 ///   (same id/names, current UTC offset) for zones that don't survive the round-trip.
 ///
+/// Patch #25: BaseDebugRuntime.IsDebuggedSessionClosedOrDisposed (Nav.Ncl.dll)
+///   AL attach-debugging (breakOnNext) sets breakpoints before a session attaches, so
+///   DebuggedSession is null. DebugRuntimeManager.ExecuteClientCall's null-check guards the
+///   runtime but not the session, so a null DebuggedSession is dereferenced → NullReference,
+///   surfaced to VS Code as "unexpected error invoking 'AddBreakpoint'". Every attach-debug
+///   breakpoint fails. Fix: return true (treat null session as closed/disposed) so the `||`
+///   short-circuits before the bad dereference and ExecuteClientCall takes its safe path.
+///
 /// JMP hooks work ONLY on BC methods (JIT-compiled). BCL methods are ReadyToRun pre-compiled
 /// and cannot be patched this way.
 /// </summary>
@@ -122,6 +130,24 @@ internal class StartupHook
 
 
         Console.WriteLine("[StartupHook] Initializing Linux compatibility patches...");
+
+        // Debug aid (opt-in): BC_DEBUG_FIRSTCHANCE=1 prints every thrown exception
+        // with its full inner chain to stderr. Mirrors WEBCLIENT_DEBUG_FIRSTCHANCE in
+        // the web client hook. Invaluable when a server-side component (e.g. the
+        // SignalR DebuggerHub) swallows the real exception and returns a generic
+        // "unexpected error" to the client. Very noisy — never enable by default.
+        if (Environment.GetEnvironmentVariable("BC_DEBUG_FIRSTCHANCE") == "1")
+        {
+            AppDomain.CurrentDomain.FirstChanceException += (s, e) =>
+            {
+                try
+                {
+                    Console.Error.WriteLine($"[FirstChance] {e.Exception}");
+                }
+                catch { /* never let the logger throw */ }
+            };
+            Console.WriteLine("[StartupHook] BC_DEBUG_FIRSTCHANCE=1: first-chance exception logging enabled");
+        }
 
         // Patch #13 (early): Prevent Watson crash on unobserved task exceptions.
         // Watson's SendReport → GetRegistryValue crashes on Linux (NullRef, no registry).
@@ -329,6 +355,22 @@ internal class StartupHook
         if (name == "Microsoft.Dynamics.Nav.Ncl")
         {
             PatchAssemblyProbing(args.LoadedAssembly);
+        }
+
+        // Patch #25: BaseDebugRuntime.IsDebuggedSessionClosedOrDisposed null-session NRE.
+        //   AL debugging via attach (breakOnNext) sets breakpoints before any session is
+        //   attached, so DebuggedSession is null. DebugRuntimeManager.ExecuteClientCall does:
+        //     flag2 = debugRuntime.IsDebuggedSessionClosedOrDisposed
+        //           || (debugRuntime?.DebuggedSession.IsDisposingOrDisposed ?? false);
+        //   The `?.` guards debugRuntime, NOT DebuggedSession — so a null session makes the
+        //   left operand return false (no short-circuit) and the right operand dereferences
+        //   null → NullReferenceException. The SignalR DebuggerHub wraps it as a generic
+        //   "unexpected error invoking 'AddBreakpoint'", and every attach-debug breakpoint
+        //   fails. Returning true when DebuggedSession is null short-circuits the ||, so
+        //   ExecuteClientCall takes its safe early-return path instead of crashing.
+        if (name == "Microsoft.Dynamics.Nav.Ncl")
+        {
+            PatchDebugRuntimeNullSession(args.LoadedAssembly);
         }
 
         // Patch #16 is now only 16b (NavUser.TryAuthenticate bypass in Nav.Ncl).
@@ -2522,6 +2564,96 @@ internal class StartupHook
         // Intentionally empty — break Microsoft's recursion bug in Nav.OpenXml.
         // No log line per call: this is invoked once per missing image and we don't want
         // to spam logs during legitimate report generation.
+    }
+
+    // ========================================================================
+    // Patch #25: BaseDebugRuntime.IsDebuggedSessionClosedOrDisposed null-session NRE.
+    //
+    // Enables AL attach-debugging (breakOnNext) against the Linux NST. See the
+    // registration comment in OnAssemblyLoad for the full root cause. In short:
+    // DebugRuntimeManager.ExecuteClientCall dereferences a null DebuggedSession
+    // because the original code's `?.` only null-checks the runtime, not the
+    // session. We make the getter report "closed/disposed" (true) for a null
+    // session so the `||` short-circuits before the bad dereference.
+    //
+    // Assembly:  Microsoft.Dynamics.Nav.Ncl.dll
+    // Type:      Microsoft.Dynamics.Nav.Runtime.Debugger.BaseDebugRuntime
+    // Property:  protected internal virtual bool IsDebuggedSessionClosedOrDisposed { get; }
+    //            (single definition on the base; DebugRuntime does not override it)
+    //
+    // Original getter:
+    //     var s = DebuggedSession;
+    //     if (s == null) return false;                 // <-- the bug: should be safe-true
+    //     return s.AccessLock?.IsStoppingOrDisposed == true;
+    // ========================================================================
+    private static MethodInfo? _origIsDebuggedSessionClosed;
+
+    private static void PatchDebugRuntimeNullSession(Assembly navNcl)
+    {
+        if (IsPatchDisabled("25")) return;
+        try
+        {
+            var type = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.Debugger.BaseDebugRuntime");
+            if (type == null)
+            {
+                Console.WriteLine("[StartupHook] Patch #25: BaseDebugRuntime type not found — skipping");
+                return;
+            }
+
+            var getter = type.GetProperty("IsDebuggedSessionClosedOrDisposed",
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)?.GetGetMethod(nonPublic: true);
+            if (getter == null)
+            {
+                Console.WriteLine("[StartupHook] Patch #25: IsDebuggedSessionClosedOrDisposed getter not found — skipping");
+                return;
+            }
+
+            _origIsDebuggedSessionClosed = getter;
+            var replacement = typeof(StartupHook).GetMethod(
+                nameof(Replacement_IsDebuggedSessionClosedOrDisposed),
+                BindingFlags.Static | BindingFlags.NonPublic)!;
+            ApplyJmpHook(getter, replacement, "BaseDebugRuntime.IsDebuggedSessionClosedOrDisposed (Patch #25)");
+            Console.WriteLine("[StartupHook] Patch #25: attach-debug null-session NRE guarded");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[StartupHook] Patch #25 failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Replacement for the instance getter BaseDebugRuntime.IsDebuggedSessionClosedOrDisposed.
+    /// Instance method → JMP hook passes the receiver as the first explicit argument.
+    /// Reflection (not a typed cast) avoids a compile-time dependency on the BC assembly.
+    /// Semantics: a null DebuggedSession is treated as "closed/disposed" (true) — the only
+    /// behavioural change from the original, and exactly what stops ExecuteClientCall from
+    /// dereferencing the null session.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool Replacement_IsDebuggedSessionClosedOrDisposed(object self)
+    {
+        try
+        {
+            var session = self.GetType().GetProperty("DebuggedSession",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(self);
+            if (session == null)
+                return true; // null session → safe early-return in ExecuteClientCall
+
+            var accessLock = session.GetType().GetProperty("AccessLock",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(session);
+            if (accessLock == null)
+                return false;
+
+            var isStopping = accessLock.GetType().GetProperty("IsStoppingOrDisposed",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(accessLock);
+            return isStopping is bool b && b;
+        }
+        catch
+        {
+            // Any unexpected reflection failure: report "not closed" so we never
+            // introduce a new failure path — the worst case reverts to original risk.
+            return false;
+        }
     }
 
     // ========================================================================

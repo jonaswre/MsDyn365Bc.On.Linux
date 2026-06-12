@@ -660,6 +660,19 @@ else
     }
 fi
 
+# Advertise the web client URL on the dev endpoint (runs every boot — BC_WEBCLIENT
+# can be toggled on an existing service volume). The AL debugger's launch mode (F5)
+# asks the NST for the web endpoint and opens the browser at
+# "<webEndpoint>?page=N&debuggingcontext=<hub-connection>" — with PublicWebBaseUrl
+# empty the generated URL is the port-less http://localhost/?page=N, which lands on
+# port 80 and the debugger never binds a session. Override the default with
+# BC_WEBCLIENT_PUBLIC_URL when the host port differs (parallel instances).
+if [ "${BC_WEBCLIENT:-0}" = "1" ]; then
+    PUBLIC_WEB_URL="${BC_WEBCLIENT_PUBLIC_URL:-http://localhost:${BC_WEBCLIENT_PORT:-8080}/}"
+    sed -i "s|PublicWebBaseUrl\" value=\"[^\"]*\"|PublicWebBaseUrl\" value=\"$PUBLIC_WEB_URL\"|" "$SERVICE_DIR/CustomSettings.config"
+    log_step "PublicWebBaseUrl set to $PUBLIC_WEB_URL (AL debugger F5 / launch-mode browser URL)"
+fi
+
 log_step "Config check:"
 grep -E "DatabaseServer|DatabaseName|DatabaseUserName|ProtectedDatabase" "$SERVICE_DIR/CustomSettings.config" | head -5
 log_step "Pre-seeding R2R extension DLL cache..."
