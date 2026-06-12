@@ -93,10 +93,28 @@ After `docker compose up`, these are available:
 | API v2.0     | `http://localhost:7052/BC/api/v2.0`       | Business API                         |
 | Management   | `http://localhost:7045/BC/Management`     | NAV management endpoint              |
 | Client (WS)  | `ws://localhost:7085/BC`                  | WebSocket client services (TestPage) |
+| Web client   | `http://localhost:8080`                   | Browser UI (opt-in, `BC_WEBCLIENT=1`) |
 
 **Authentication:** `BCRUNNER` / `Admin123!` (NavUserPassword).
 Note the username is *not* `admin` — `BCRUNNER` is used so test code that
 needs to delete a user named "ADMIN" doesn't nuke the runner's own session.
+
+### Web client (browser UI)
+
+Microsoft's real web client (`Prod.Client.WebCoreApp`) can be self-hosted
+on Kestrel inside the bc container — sign-in, role center, list pages, and
+cards work in a normal browser against the Linux NST:
+
+```bash
+BC_WEBCLIENT=1 docker compose up -d --wait
+# then open http://localhost:8080  (BCRUNNER / Admin123!)
+```
+
+Works with the macOS overlay too
+(`BC_WEBCLIENT=1 docker compose -f docker-compose.yml -f docker-compose.macos.yml up -d --wait`).
+Change the host port with `BC_WEBCLIENT_PORT`. EXPERIMENTAL — intended for
+developers who want to poke at data and pages in a real UI; reports,
+printing, and file upload are untested. Details: [docs/WEBCLIENT-POC.md](docs/WEBCLIENT-POC.md).
 
 ---
 

@@ -384,6 +384,14 @@ fi
 # Sandbox tenant type
 $SQLCMD_DB -Q "UPDATE [\$ndo\$tenantproperty] SET tenanttype = 1;" 2>/dev/null
 
+# Normalize demo-DB user time zones to UTC. The CRONUS backup ships
+# [User Personalization].[Time Zone] = 'Europe/Amsterdam' for the default
+# user SID; on Linux, BC's TimeZoneInfo serialize→deserialize round-trip
+# throws for such ICU zones and kills every client login at OpenConnection.
+# Patch #24 in the StartupHook also guards this at runtime — this is the
+# data-side half so the shipped demo data is clean to begin with.
+$SQLCMD_DB -Q "UPDATE [User Personalization] SET [Time Zone] = N'UTC' WHERE [Time Zone] <> N'UTC';" 2>/dev/null
+
 # SQL performance tuning for CI/CD — disable safety overhead not needed for test runs
 # ALTER DATABASE must run from master context, not from within the target database
 $SQLCMD -Q "
@@ -1179,6 +1187,21 @@ PYEOF
     TOTAL_ELAPSED=$(( $(date +%s) - ENTRYPOINT_START ))
     echo "[entrypoint] [${TOTAL_ELAPSED}s] Ready for extensions. Total startup: ${TOTAL_ELAPSED}s"
     touch /tmp/bc-ready
+
+    # Opt-in web client PoC: self-host Microsoft's Prod.Client.WebCoreApp on
+    # Kestrel, pointed at this NST. EXPERIMENTAL — see docs/WEBCLIENT-POC.md.
+    # Supervised with a simple restart loop: this is a dev convenience tool,
+    # so a crash should self-heal rather than require a docker exec.
+    if [ "${BC_WEBCLIENT:-0}" = "1" ]; then
+        echo "[entrypoint] BC_WEBCLIENT=1: starting web client on port ${BC_WEBCLIENT_PORT:-8080} (log: /tmp/webclient.log)"
+        (
+            while true; do
+                /bc/scripts/start-webclient.sh >> /tmp/webclient.log 2>&1
+                echo "[entrypoint] web client exited (rc=$?) — restarting in 3s"
+                sleep 3
+            done
+        ) &
+    fi
 ) &
 
 wait $BC_PID
