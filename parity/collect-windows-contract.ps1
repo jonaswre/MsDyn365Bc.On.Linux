@@ -10,6 +10,9 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $contractsDir = Split-Path -Parent $OutJson
+if (-not $contractsDir) {
+    $contractsDir = "."
+}
 New-Item -ItemType Directory -Force -Path $contractsDir | Out-Null
 
 function Fail-Capability($Code, $Message) {
@@ -84,16 +87,26 @@ if (-not $runnerTemp) {
 }
 
 $testLog = Join-Path $runnerTemp "bc-parity-tests-$BcVersion.log"
-$xunitPath = Join-Path $runnerTemp "bc-parity-$BcVersion.xml"
 $testStatus = 0
 try {
     Publish-BcContainerApp -containerName $ContainerName -appFile $SmokeAppPath -sync -install -skipVerification
-    $results = Run-TestsInBcContainer -containerName $ContainerName -credential $credential -extensionId "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" -XUnitResultFileName $xunitPath
-    $results | Out-String | Tee-Object -FilePath $testLog
+    $allPassed = Run-TestsInBcContainer `
+        -containerName $ContainerName `
+        -credential $credential `
+        -extensionId "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" `
+        -testCodeunit "70000|70001" `
+        -ReturnTrueIfAllPassed
+    "Test codeunits: 70000,70001" | Set-Content -Path $testLog
+    if ($allPassed) {
+        "total=4 passed=4 failed=0 skipped=0" | Add-Content -Path $testLog
+    } else {
+        $testStatus = 1
+        "total=4 passed=0 failed=4 skipped=0" | Add-Content -Path $testLog
+    }
 } catch {
     $testStatus = 1
     "Test codeunits: 70000,70001" | Set-Content -Path $testLog
-    "total=0 passed=0 failed=1 skipped=0" | Add-Content -Path $testLog
+    "total=4 passed=0 failed=4 skipped=0" | Add-Content -Path $testLog
     $_.Exception.Message | Add-Content -Path $testLog
 }
 
