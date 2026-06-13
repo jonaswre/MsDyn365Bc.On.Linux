@@ -40,6 +40,39 @@ function Invoke-NativeChecked([string]$CapabilityCode, [string[]]$Command) {
     }
 }
 
+function Write-FailedTestSummary([string]$TestLog, [string]$Message) {
+    "Test codeunits: 70000,70001" | Set-Content -Path $TestLog
+    "total=4 passed=0 failed=4 skipped=0" | Add-Content -Path $TestLog
+    if ($Message) {
+        $Message | Add-Content -Path $TestLog
+    }
+}
+
+function Write-TestSummaryFromXUnit([string]$XUnitPath, [string]$TestLog) {
+    "Test codeunits: 70000,70001" | Set-Content -Path $TestLog
+    [xml]$xunit = Get-Content -Path $XUnitPath
+    $assemblies = @($xunit.assemblies.assembly)
+    if ($assemblies.Count -eq 0) {
+        throw "XUnit result file contains no assembly nodes: $XUnitPath"
+    }
+
+    $total = 0
+    $passed = 0
+    $failed = 0
+    $skipped = 0
+    foreach ($assembly in $assemblies) {
+        $total += [int]$assembly.total
+        $passed += [int]$assembly.passed
+        $failed += [int]$assembly.failed
+        if ($null -ne $assembly.skipped -and "$($assembly.skipped)" -ne "") {
+            $skipped += [int]$assembly.skipped
+        }
+    }
+
+    "total=$total passed=$passed failed=$failed skipped=$skipped" | Add-Content -Path $TestLog
+    return @{ Total = $total; Passed = $passed; Failed = $failed; Skipped = $skipped }
+}
+
 Invoke-NativeChecked "WINDOWS_RUNNER_DOCKER_UNAVAILABLE" @("docker", "version")
 Invoke-NativeChecked "WINDOWS_RUNNER_WINDOWS_CONTAINERS_UNAVAILABLE" @("docker", "run", "--rm", "mcr.microsoft.com/windows/nanoserver:ltsc2022", "cmd", "/c", "ver")
 
@@ -87,27 +120,48 @@ if (-not $runnerTemp) {
 }
 
 $testLog = Join-Path $runnerTemp "bc-parity-tests-$BcVersion.log"
+$bcContainerHelperData = Join-Path $env:ProgramData "BcContainerHelper"
+New-Item -ItemType Directory -Force -Path $bcContainerHelperData | Out-Null
+$xunitPath = Join-Path $bcContainerHelperData "bc-parity-$BcVersion.xml"
 $testStatus = 0
 try {
     Publish-BcContainerApp -containerName $ContainerName -appFile $SmokeAppPath -sync -install -skipVerification
+    if (Test-Path -Path $xunitPath) {
+        Remove-Item -Path $xunitPath -Force
+    }
+
     $allPassed = Run-TestsInBcContainer `
         -containerName $ContainerName `
         -credential $credential `
         -extensionId "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" `
         -testCodeunit "70000|70001" `
+        -detailed `
+        -XUnitResultFileName $xunitPath `
         -ReturnTrueIfAllPassed
-    "Test codeunits: 70000,70001" | Set-Content -Path $testLog
-    if ($allPassed) {
-        "total=4 passed=4 failed=0 skipped=0" | Add-Content -Path $testLog
-    } else {
+
+    try {
+        $summary = Write-TestSummaryFromXUnit -XUnitPath $xunitPath -TestLog $testLog
+    } catch {
         $testStatus = 1
-        "total=4 passed=0 failed=4 skipped=0" | Add-Content -Path $testLog
+        Write-FailedTestSummary -TestLog $testLog -Message "XUnit result file missing or unparseable: $($_.Exception.Message)"
+        $summary = $null
+    }
+
+    if ($null -ne $summary) {
+        if (-not $allPassed) {
+            $testStatus = 1
+            "Run-TestsInBcContainer returned false" | Add-Content -Path $testLog
+        } elseif ($summary.Total -ne 4) {
+            $testStatus = 1
+            Write-FailedTestSummary -TestLog $testLog -Message "Expected 4 tests in XUnit result, found $($summary.Total): $xunitPath"
+        } elseif ($summary.Failed -ne 0) {
+            $testStatus = 1
+            "XUnit result reported $($summary.Failed) failed tests" | Add-Content -Path $testLog
+        }
     }
 } catch {
     $testStatus = 1
-    "Test codeunits: 70000,70001" | Set-Content -Path $testLog
-    "total=4 passed=0 failed=4 skipped=0" | Add-Content -Path $testLog
-    $_.Exception.Message | Add-Content -Path $testLog
+    Write-FailedTestSummary -TestLog $testLog -Message $_.Exception.Message
 }
 
 try {
