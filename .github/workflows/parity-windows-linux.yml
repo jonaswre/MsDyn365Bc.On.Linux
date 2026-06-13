@@ -20,11 +20,23 @@ jobs:
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
       - id: matrix
+        env:
+          VERSIONS: ${{ inputs.versions }}
         run: |
-          versions='${{ inputs.versions }}'
-          python3 - <<'PY' "$versions" >> "$GITHUB_OUTPUT"
-          import json, sys
-          versions = [item.strip() for item in sys.argv[1].split(",") if item.strip()]
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          import re
+          import sys
+
+          versions = [item.strip() for item in os.environ["VERSIONS"].split(",") if item.strip()]
+          invalid = [version for version in versions if not re.fullmatch(r"[0-9]+\.[0-9]+", version)]
+          if not versions:
+              print("No BC versions provided. Use comma-separated major.minor values like 27.5,28.1.", file=sys.stderr)
+              sys.exit(1)
+          if invalid:
+              print(f"Invalid BC version(s): {', '.join(invalid)}. Expected comma-separated major.minor values like 27.5,28.1.", file=sys.stderr)
+              sys.exit(1)
           print("matrix=" + json.dumps({"bc_version": versions}))
           PY
 
@@ -34,15 +46,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    env:
+      BC_VERSION: ${{ matrix.bc_version }}
     steps:
       - uses: actions/checkout@v4
       - name: Download BC artifacts
         run: |
-          mkdir -p artifact-cache/${{ matrix.bc_version }}
-          scripts/download-artifacts.sh onprem ${{ matrix.bc_version }} w1 artifact-cache/${{ matrix.bc_version }}
+          mkdir -p "artifact-cache/$BC_VERSION"
+          scripts/download-artifacts.sh onprem "$BC_VERSION" w1 "artifact-cache/$BC_VERSION"
       - name: Install AL compiler and compile smoke app
         run: |
-          BC_MAJOR=$(echo "${{ matrix.bc_version }}" | cut -d. -f1)
+          BC_MAJOR=$(echo "$BC_VERSION" | cut -d. -f1)
           case "$BC_MAJOR" in
             27) AL_TOOL="16.2.28.57946"; RUNTIME="16.0" ;;
             28) AL_TOOL="17.0.34.45391"; RUNTIME="17.0" ;;
@@ -61,7 +75,7 @@ jobs:
           chmod +x "$HOME/al"
           echo "$HOME" >> "$GITHUB_PATH"
           python3 scripts/stage-symbols.py \
-            --artifact-dir artifact-cache/${{ matrix.bc_version }} \
+            --artifact-dir "artifact-cache/$BC_VERSION" \
             --app-json extensions/smoke-test/app.json \
             --out-dir extensions/smoke-test/.alpackages
           python3 - <<'PY'
@@ -73,7 +87,7 @@ jobs:
           data["runtime"] = os.environ["RUNTIME"]
           path.write_text(json.dumps(data, indent=2) + "\n")
           PY
-          "$HOME/al" compile "/project:extensions/smoke-test" "/packagecachepath:extensions/smoke-test/.alpackages" "/out:smoke-test-${{ matrix.bc_version }}.app"
+          "$HOME/al" compile "/project:extensions/smoke-test" "/packagecachepath:extensions/smoke-test/.alpackages" "/out:smoke-test-$BC_VERSION.app"
       - uses: actions/upload-artifact@v4
         with:
           name: smoke-app-${{ matrix.bc_version }}
@@ -103,7 +117,7 @@ jobs:
           scripts/wait-for-bc-healthy.sh 30
       - name: Collect Linux contract
         run: |
-          parity/collect-linux-contract.sh "build/smoke-test-${{ matrix.bc_version }}.app" "${{ matrix.bc_version }}" "contracts/linux-${{ matrix.bc_version }}.json"
+          parity/collect-linux-contract.sh "build/smoke-test-$BC_VERSION.app" "$BC_VERSION" "contracts/linux-$BC_VERSION.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -116,6 +130,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    env:
+      BC_VERSION: ${{ matrix.bc_version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -125,7 +141,7 @@ jobs:
       - name: Collect Windows contract
         shell: pwsh
         run: |
-          .\parity\collect-windows-contract.ps1 -BcVersion "${{ matrix.bc_version }}" -SmokeAppPath "$PWD\build\smoke-test-${{ matrix.bc_version }}.app" -OutJson "$PWD\contracts\windows-${{ matrix.bc_version }}.json"
+          .\parity\collect-windows-contract.ps1 -BcVersion "$env:BC_VERSION" -SmokeAppPath "$PWD\build\smoke-test-$env:BC_VERSION.app" -OutJson "$PWD\contracts\windows-$env:BC_VERSION.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -144,10 +160,13 @@ jobs:
 
   compare-contracts:
     needs: [prepare, linux-contract, windows-contract]
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    env:
+      BC_VERSION: ${{ matrix.bc_version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -161,6 +180,6 @@ jobs:
       - name: Compare contracts
         run: |
           python3 parity/compare_contracts.py \
-            --linux "contracts/linux-${{ matrix.bc_version }}.json" \
-            --windows "contracts/windows-${{ matrix.bc_version }}.json" \
+            --linux "contracts/linux-$BC_VERSION.json" \
+            --windows "contracts/windows-$BC_VERSION.json" \
             --known-deltas parity/known-deltas.json
