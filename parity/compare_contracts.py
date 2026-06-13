@@ -10,7 +10,8 @@ from typing import Any
 
 
 IGNORED_TOP_LEVEL_KEYS = {"platform", "diagnostics"}
-MISSING_VALUE = {"__missing__": True}
+MISSING_VALUE = object()
+MISSING_VALUE_OUTPUT = {"__missing_key__": True}
 
 
 @dataclass
@@ -34,10 +35,22 @@ def load_known_deltas(path: Path) -> list[dict[str, Any]]:
 
 
 def normalize_for_compare(value: Any) -> Any:
+    if value is MISSING_VALUE:
+        return value
     if isinstance(value, dict):
         return {key: normalize_for_compare(value[key]) for key in sorted(value)}
     if isinstance(value, list):
         return sorted((normalize_for_compare(item) for item in value), key=lambda item: json.dumps(item, sort_keys=True))
+    return value
+
+
+def render_diff_value(value: Any) -> Any:
+    if value is MISSING_VALUE:
+        return MISSING_VALUE_OUTPUT
+    if isinstance(value, dict):
+        return {key: render_diff_value(child) for key, child in value.items()}
+    if isinstance(value, list):
+        return [render_diff_value(item) for item in value]
     return value
 
 
@@ -54,13 +67,34 @@ def flatten_diff(path: str, left: Any, right: Any) -> list[dict[str, Any]]:
             right_value = right[key] if key in right else MISSING_VALUE
             diffs.extend(flatten_diff(child_path, left_value, right_value))
         return diffs
-    return [{"path": path, "linux": left, "windows": right}]
+    return [{"path": path, "linux": render_diff_value(left), "windows": render_diff_value(right)}]
 
 
 def item_matches(item: Any, match: dict[str, Any]) -> bool:
     if not isinstance(item, dict):
         return False
     return all(item.get(key) == value for key, value in match.items())
+
+
+def item_key(item: Any) -> str:
+    return json.dumps(normalize_for_compare(item), sort_keys=True)
+
+
+def list_remainder(items: list[Any], items_to_subtract: list[Any]) -> list[Any]:
+    subtract_counts: dict[str, int] = {}
+    for item in items_to_subtract:
+        key = item_key(item)
+        subtract_counts[key] = subtract_counts.get(key, 0) + 1
+
+    remainder: list[Any] = []
+    for item in items:
+        key = item_key(item)
+        count = subtract_counts.get(key, 0)
+        if count:
+            subtract_counts[key] = count - 1
+        else:
+            remainder.append(item)
+    return remainder
 
 
 def apply_known_deltas(diffs: list[dict[str, Any]], known_deltas: list[dict[str, Any]]) -> CompareResult:
@@ -74,8 +108,8 @@ def apply_known_deltas(diffs: list[dict[str, Any]], known_deltas: list[dict[str,
                 continue
             linux_items = diff["linux"]
             windows_items = diff["windows"]
-            remaining_linux = [item for item in linux_items if item not in windows_items]
-            remaining_windows = [item for item in windows_items if item not in linux_items]
+            remaining_linux = list_remainder(linux_items, windows_items)
+            remaining_windows = list_remainder(windows_items, linux_items)
             for delta in known_deltas:
                 if delta.get("path") != "apps.customApps[]":
                     continue
@@ -83,7 +117,7 @@ def apply_known_deltas(diffs: list[dict[str, Any]], known_deltas: list[dict[str,
                 if not matched_linux:
                     continue
                 applied.append({"delta": delta, "diff": {"path": diff["path"], "linux": matched_linux, "windows": []}})
-                remaining_linux = [item for item in remaining_linux if item not in matched_linux]
+                remaining_linux = list_remainder(remaining_linux, matched_linux)
             if not remaining_linux and not remaining_windows:
                 handled = True
             elif remaining_linux != linux_items or remaining_windows != windows_items:

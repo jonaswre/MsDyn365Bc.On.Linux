@@ -92,8 +92,21 @@ class CompareContractsTests(unittest.TestCase):
 
         self.assertEqual(1, len(result.unexpected))
         self.assertEqual("auth.authSchemeClass", result.unexpected[0]["path"])
-        self.assertEqual({"__missing__": True}, result.unexpected[0]["linux"])
+        self.assertEqual({"__missing_key__": True}, result.unexpected[0]["linux"])
         self.assertIsNone(result.unexpected[0]["windows"])
+
+    def test_explicit_missing_marker_like_value_is_not_treated_as_missing(self):
+        linux = base_contract("linux")
+        windows = base_contract("windows")
+        linux["auth"]["authSchemeClass"] = {"__missing__": True}
+        del windows["auth"]["authSchemeClass"]
+
+        result = compare_contracts(linux, windows, [])
+
+        self.assertEqual(1, len(result.unexpected))
+        self.assertEqual("auth.authSchemeClass", result.unexpected[0]["path"])
+        self.assertEqual({"__missing__": True}, result.unexpected[0]["linux"])
+        self.assertNotEqual({"__missing__": True}, result.unexpected[0]["windows"])
 
     def test_known_delta_suppresses_matching_custom_app_difference(self):
         linux = base_contract("linux")
@@ -153,6 +166,33 @@ class CompareContractsTests(unittest.TestCase):
         self.assertEqual("apps.customApps", result.unexpected[0]["path"])
         self.assertEqual([], result.unexpected[0]["linux"])
         self.assertEqual(windows["apps"]["customApps"], result.unexpected[0]["windows"])
+
+    def test_known_delta_preserves_duplicate_custom_app_remainders(self):
+        linux = base_contract("linux")
+        windows = base_contract("windows")
+        app = {
+            "publisher": "ALDirectCompile",
+            "name": "Test Runner Extension",
+            "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            "version": "3.0.0.0",
+        }
+        linux["apps"]["customApps"] = [app, app]
+        windows["apps"]["customApps"] = [app]
+        known = [
+            {
+                "path": "apps.customApps[]",
+                "match": {"publisher": "Contoso", "name": "Other Extension"},
+                "reason": "Only a non-matching custom app is allowed.",
+            }
+        ]
+
+        result = compare_contracts(linux, windows, known)
+
+        self.assertEqual([], result.applied_known_deltas)
+        self.assertEqual(1, len(result.unexpected))
+        self.assertEqual("apps.customApps", result.unexpected[0]["path"])
+        self.assertEqual([app], result.unexpected[0]["linux"])
+        self.assertEqual([], result.unexpected[0]["windows"])
 
     def test_known_delta_does_not_suppress_non_list_custom_apps_diff(self):
         linux = base_contract("linux")
