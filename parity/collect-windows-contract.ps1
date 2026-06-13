@@ -161,7 +161,17 @@ try {
     }
 } catch {
     $testStatus = 1
-    Write-FailedTestSummary -TestLog $testLog -Message $_.Exception.Message
+    $runnerError = $_.Exception.Message
+    if (Test-Path -Path $xunitPath) {
+        try {
+            $null = Write-TestSummaryFromXUnit -XUnitPath $xunitPath -TestLog $testLog
+            $runnerError | Add-Content -Path $testLog
+        } catch {
+            Write-FailedTestSummary -TestLog $testLog -Message $runnerError
+        }
+    } else {
+        Write-FailedTestSummary -TestLog $testLog -Message $runnerError
+    }
 }
 
 try {
