@@ -11,7 +11,6 @@ from typing import Any
 
 IGNORED_TOP_LEVEL_KEYS = {"platform", "diagnostics"}
 MISSING_VALUE = object()
-MISSING_VALUE_OUTPUT = {"__missing_key__": True}
 
 
 @dataclass
@@ -44,14 +43,16 @@ def normalize_for_compare(value: Any) -> Any:
     return value
 
 
-def render_diff_value(value: Any) -> Any:
-    if value is MISSING_VALUE:
-        return MISSING_VALUE_OUTPUT
-    if isinstance(value, dict):
-        return {key: render_diff_value(child) for key, child in value.items()}
-    if isinstance(value, list):
-        return [render_diff_value(item) for item in value]
-    return value
+def diff_entry(path: str, left: Any, right: Any) -> dict[str, Any]:
+    linux_missing = left is MISSING_VALUE
+    windows_missing = right is MISSING_VALUE
+    return {
+        "path": path,
+        "linux": None if linux_missing else left,
+        "windows": None if windows_missing else right,
+        "linuxMissing": linux_missing,
+        "windowsMissing": windows_missing,
+    }
 
 
 def flatten_diff(path: str, left: Any, right: Any) -> list[dict[str, Any]]:
@@ -67,7 +68,7 @@ def flatten_diff(path: str, left: Any, right: Any) -> list[dict[str, Any]]:
             right_value = right[key] if key in right else MISSING_VALUE
             diffs.extend(flatten_diff(child_path, left_value, right_value))
         return diffs
-    return [{"path": path, "linux": render_diff_value(left), "windows": render_diff_value(right)}]
+    return [diff_entry(path, left, right)]
 
 
 def item_matches(item: Any, match: dict[str, Any]) -> bool:
@@ -97,6 +98,19 @@ def list_remainder(items: list[Any], items_to_subtract: list[Any]) -> list[Any]:
     return remainder
 
 
+def pop_first_matching(items: list[Any], match: dict[str, Any]) -> tuple[Any | None, list[Any]]:
+    for index, item in enumerate(items):
+        if item_matches(item, match):
+            return item, items[:index] + items[index + 1 :]
+    return None, items
+
+
+def format_diff_side(diff: dict[str, Any], side: str) -> str:
+    if diff.get(f"{side}Missing", False):
+        return "<MISSING>"
+    return json.dumps(diff[side], sort_keys=True)
+
+
 def apply_known_deltas(diffs: list[dict[str, Any]], known_deltas: list[dict[str, Any]]) -> CompareResult:
     unexpected: list[dict[str, Any]] = []
     applied: list[dict[str, Any]] = []
@@ -113,15 +127,22 @@ def apply_known_deltas(diffs: list[dict[str, Any]], known_deltas: list[dict[str,
             for delta in known_deltas:
                 if delta.get("path") != "apps.customApps[]":
                     continue
-                matched_linux = [item for item in remaining_linux if item_matches(item, delta.get("match", {}))]
-                if not matched_linux:
+                matched_linux, remaining_linux = pop_first_matching(remaining_linux, delta.get("match", {}))
+                if matched_linux is None:
                     continue
-                applied.append({"delta": delta, "diff": {"path": diff["path"], "linux": matched_linux, "windows": []}})
-                remaining_linux = list_remainder(remaining_linux, matched_linux)
+                applied.append({"delta": delta, "diff": {"path": diff["path"], "linux": [matched_linux], "windows": []}})
             if not remaining_linux and not remaining_windows:
                 handled = True
             elif remaining_linux != linux_items or remaining_windows != windows_items:
-                unexpected.append({"path": diff["path"], "linux": remaining_linux, "windows": remaining_windows})
+                unexpected.append(
+                    {
+                        "path": diff["path"],
+                        "linux": remaining_linux,
+                        "windows": remaining_windows,
+                        "linuxMissing": False,
+                        "windowsMissing": False,
+                    }
+                )
                 handled = True
         if not handled:
             unexpected.append(diff)
@@ -147,8 +168,8 @@ def main(argv: list[str]) -> int:
         print(f"KNOWN {applied['diff']['path']}: {reason}")
     for diff in result.unexpected:
         print(f"DIFF {diff['path']}")
-        print(f"  linux:   {json.dumps(diff['linux'], sort_keys=True)}")
-        print(f"  windows: {json.dumps(diff['windows'], sort_keys=True)}")
+        print(f"  linux:   {format_diff_side(diff, 'linux')}")
+        print(f"  windows: {format_diff_side(diff, 'windows')}")
     return 1 if result.unexpected else 0
 
 

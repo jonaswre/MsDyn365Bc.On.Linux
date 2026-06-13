@@ -92,21 +92,25 @@ class CompareContractsTests(unittest.TestCase):
 
         self.assertEqual(1, len(result.unexpected))
         self.assertEqual("auth.authSchemeClass", result.unexpected[0]["path"])
-        self.assertEqual({"__missing_key__": True}, result.unexpected[0]["linux"])
+        self.assertIsNone(result.unexpected[0]["linux"])
+        self.assertTrue(result.unexpected[0]["linuxMissing"])
         self.assertIsNone(result.unexpected[0]["windows"])
+        self.assertFalse(result.unexpected[0]["windowsMissing"])
 
-    def test_explicit_missing_marker_like_value_is_not_treated_as_missing(self):
+    def test_explicit_missing_key_marker_like_value_is_not_treated_as_missing(self):
         linux = base_contract("linux")
         windows = base_contract("windows")
-        linux["auth"]["authSchemeClass"] = {"__missing__": True}
+        linux["auth"]["authSchemeClass"] = {"__missing_key__": True}
         del windows["auth"]["authSchemeClass"]
 
         result = compare_contracts(linux, windows, [])
 
         self.assertEqual(1, len(result.unexpected))
         self.assertEqual("auth.authSchemeClass", result.unexpected[0]["path"])
-        self.assertEqual({"__missing__": True}, result.unexpected[0]["linux"])
-        self.assertNotEqual({"__missing__": True}, result.unexpected[0]["windows"])
+        self.assertEqual({"__missing_key__": True}, result.unexpected[0]["linux"])
+        self.assertFalse(result.unexpected[0]["linuxMissing"])
+        self.assertIsNone(result.unexpected[0]["windows"])
+        self.assertTrue(result.unexpected[0]["windowsMissing"])
 
     def test_known_delta_suppresses_matching_custom_app_difference(self):
         linux = base_contract("linux")
@@ -189,6 +193,32 @@ class CompareContractsTests(unittest.TestCase):
         result = compare_contracts(linux, windows, known)
 
         self.assertEqual([], result.applied_known_deltas)
+        self.assertEqual(1, len(result.unexpected))
+        self.assertEqual("apps.customApps", result.unexpected[0]["path"])
+        self.assertEqual([app], result.unexpected[0]["linux"])
+        self.assertEqual([], result.unexpected[0]["windows"])
+
+    def test_one_known_delta_suppresses_one_matching_duplicate_custom_app(self):
+        linux = base_contract("linux")
+        windows = base_contract("windows")
+        app = {
+            "publisher": "ALDirectCompile",
+            "name": "Test Runner Extension",
+            "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            "version": "3.0.0.0",
+        }
+        linux["apps"]["customApps"] = [app, app]
+        known = [
+            {
+                "path": "apps.customApps[]",
+                "match": {"publisher": "ALDirectCompile", "name": "Test Runner Extension"},
+                "reason": "Linux runner installs a custom API extension for v1 test orchestration.",
+            }
+        ]
+
+        result = compare_contracts(linux, windows, known)
+
+        self.assertEqual(1, len(result.applied_known_deltas))
         self.assertEqual(1, len(result.unexpected))
         self.assertEqual("apps.customApps", result.unexpected[0]["path"])
         self.assertEqual([app], result.unexpected[0]["linux"])
