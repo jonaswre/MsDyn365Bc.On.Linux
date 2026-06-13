@@ -258,6 +258,23 @@ def record_zero_status(diagnostics: dict[str, str], key: str, url: str, status: 
         diagnostics[key] = f"request failed: {url}: {error_message}" if error_message else f"request failed: {url}"
 
 
+def add_diagnostic_context(diagnostics: dict[str, str], key: str, context: str) -> None:
+    existing = diagnostics.get(key)
+    if existing:
+        if context not in existing:
+            diagnostics[key] = f"{existing}; {context}"
+    else:
+        diagnostics[key] = context
+
+
+def collection_failure_message(label: str, status: int, url: str) -> str:
+    message = f"{label}: {http_class(status)} {url}"
+    error_message = LAST_FETCH_ERRORS.get(url)
+    if status == 0 and error_message:
+        return f"{message}: {error_message}"
+    return message
+
+
 def surface_probe(url: str, valid_auth: str, invalid_auth: str, diagnostics: dict[str, str], name: str) -> dict[str, Any]:
     valid_status, _ = fetch_status(url, valid_auth)
     invalid_status, _ = fetch_status(url, invalid_auth)
@@ -361,7 +378,11 @@ def first_company_id(args: argparse.Namespace, diagnostics: dict[str, str]) -> A
     api_status, api_payload = fetch_json(api_url, args.auth)
     record_zero_status(diagnostics, "automation.company", api_url, api_status)
     if not 200 <= api_status <= 299:
-        diagnostics["automation.company"] = f"company id collection failed: {http_class(api_status)} {api_url}"
+        add_diagnostic_context(
+            diagnostics,
+            "automation.company",
+            collection_failure_message("company id collection failed", api_status, api_url),
+        )
         return None
     companies = extract_items(api_payload)
     if not companies:
@@ -390,7 +411,7 @@ def collect_apps(args: argparse.Namespace, diagnostics: dict[str, str], company_
     items = extract_items(payload)
     collection_succeeded = 200 <= status <= 299
     if not collection_succeeded:
-        diagnostics["apps.collection"] = f"extension collection failed: {http_class(status)} {url}"
+        add_diagnostic_context(diagnostics, "apps.collection", collection_failure_message("extension collection failed", status, url))
     microsoft_apps, custom_apps, test_framework_present = split_apps(items if collection_succeeded else [])
     return {
         "microsoftApps": microsoft_apps,
@@ -419,7 +440,11 @@ def collect_user_permissions(
         status, payload = fetch_json(url, args.auth)
         record_zero_status(diagnostics, f"users.permissions.{security_id}", url, status)
         if not 200 <= status <= 299:
-            diagnostics["users.permissions"] = f"permission collection failed: {http_class(status)} {url}"
+            add_diagnostic_context(
+                diagnostics,
+                "users.permissions",
+                collection_failure_message("permission collection failed", status, url),
+            )
             permission_collection_succeeded = False
             break
         if any(is_super_permission(permission) for permission in extract_items(payload)):
@@ -448,7 +473,7 @@ def collect_users(args: argparse.Namespace, diagnostics: dict[str, str], company
     if collection_succeeded:
         enabled_super_count, permission_collection_succeeded = collect_user_permissions(args, diagnostics, company_id, users)
     else:
-        diagnostics["users.collection"] = f"user collection failed: {http_class(status)} {url}"
+        add_diagnostic_context(diagnostics, "users.collection", collection_failure_message("user collection failed", status, url))
         enabled_super_count = 0
         permission_collection_succeeded = False
 

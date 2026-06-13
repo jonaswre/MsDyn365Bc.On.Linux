@@ -235,6 +235,68 @@ class CollectContractTests(unittest.TestCase):
         self.assertEqual(0, status)
         self.assertIn("connection exploded", diagnostics["dev.metadata"])
 
+    def test_collect_apps_preserves_fetch_exception_diagnostics(self):
+        args = SimpleNamespace(api_url="http://localhost:7052/BC/api/v2.0", auth="admin:admin")
+        diagnostics = {}
+
+        def fake_fetch_json(url, auth, timeout=15):
+            del auth, timeout
+            collect_contract.LAST_FETCH_ERRORS[url] = "RuntimeError: connection exploded"
+            return 0, {}
+
+        original_fetch_json = collect_contract.fetch_json
+        collect_contract.LAST_FETCH_ERRORS.clear()
+        try:
+            collect_contract.fetch_json = fake_fetch_json
+            result = collect_contract.collect_apps(args, diagnostics, "company-id")
+        finally:
+            collect_contract.fetch_json = original_fetch_json
+
+        self.assertFalse(result["collectionSucceeded"])
+        self.assertIn("connection exploded", diagnostics["apps.collection"])
+
+    def test_collect_users_preserves_fetch_exception_diagnostics(self):
+        args = SimpleNamespace(api_url="http://localhost:7052/BC/api/v2.0", auth="admin:admin")
+        diagnostics = {}
+
+        def fake_fetch_json(url, auth, timeout=15):
+            del auth, timeout
+            collect_contract.LAST_FETCH_ERRORS[url] = "RuntimeError: connection exploded"
+            return 0, {}
+
+        original_fetch_json = collect_contract.fetch_json
+        collect_contract.LAST_FETCH_ERRORS.clear()
+        try:
+            collect_contract.fetch_json = fake_fetch_json
+            result = collect_contract.collect_users(args, diagnostics, "company-id")
+        finally:
+            collect_contract.fetch_json = original_fetch_json
+
+        self.assertFalse(result["collectionSucceeded"])
+        self.assertIn("connection exploded", diagnostics["users.collection"])
+
+    def test_permission_failure_preserves_fetch_exception_diagnostics(self):
+        args = SimpleNamespace(api_url="http://localhost:7052/BC/api/v2.0", auth="admin:admin")
+        diagnostics = {}
+
+        def fake_fetch_json(url, auth, timeout=15):
+            del auth, timeout
+            if url.endswith("/users"):
+                return 200, {"value": [{"userName": "ADMIN", "userSecurityId": "user-1", "enabled": True}]}
+            collect_contract.LAST_FETCH_ERRORS[url] = "RuntimeError: permission endpoint exploded"
+            return 0, {}
+
+        original_fetch_json = collect_contract.fetch_json
+        collect_contract.LAST_FETCH_ERRORS.clear()
+        try:
+            collect_contract.fetch_json = fake_fetch_json
+            result = collect_contract.collect_users(args, diagnostics, "company-id")
+        finally:
+            collect_contract.fetch_json = original_fetch_json
+
+        self.assertFalse(result["permissionCollectionSucceeded"])
+        self.assertIn("permission endpoint exploded", diagnostics["users.permissions"])
+
     def test_summarize_test_output_parses_current_run_tests_format(self):
         output = "Test codeunits: 70000,70001\ntotal=4 passed=4 failed=0 skipped=0\n"
         summary = summarize_test_output(output, "websocket")
