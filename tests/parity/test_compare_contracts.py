@@ -82,6 +82,19 @@ class CompareContractsTests(unittest.TestCase):
         self.assertEqual(1, len(result.unexpected))
         self.assertEqual("auth.invalidCredentialsRejected", result.unexpected[0]["path"])
 
+    def test_missing_key_is_distinguished_from_explicit_null(self):
+        linux = base_contract("linux")
+        windows = base_contract("windows")
+        del linux["auth"]["authSchemeClass"]
+        windows["auth"]["authSchemeClass"] = None
+
+        result = compare_contracts(linux, windows, [])
+
+        self.assertEqual(1, len(result.unexpected))
+        self.assertEqual("auth.authSchemeClass", result.unexpected[0]["path"])
+        self.assertEqual({"__missing__": True}, result.unexpected[0]["linux"])
+        self.assertIsNone(result.unexpected[0]["windows"])
+
     def test_known_delta_suppresses_matching_custom_app_difference(self):
         linux = base_contract("linux")
         windows = base_contract("windows")
@@ -105,6 +118,58 @@ class CompareContractsTests(unittest.TestCase):
 
         self.assertEqual([], result.unexpected)
         self.assertEqual(1, len(result.applied_known_deltas))
+
+    def test_known_delta_reports_unmatched_custom_apps(self):
+        linux = base_contract("linux")
+        windows = base_contract("windows")
+        linux["apps"]["customApps"] = [
+            {
+                "publisher": "ALDirectCompile",
+                "name": "Test Runner Extension",
+                "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "version": "3.0.0.0",
+            }
+        ]
+        windows["apps"]["customApps"] = [
+            {
+                "publisher": "Contoso",
+                "name": "Windows Only Extension",
+                "id": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+                "version": "1.0.0.0",
+            }
+        ]
+        known = [
+            {
+                "path": "apps.customApps[]",
+                "match": {"publisher": "ALDirectCompile", "name": "Test Runner Extension"},
+                "reason": "Linux runner installs a custom API extension for v1 test orchestration.",
+            }
+        ]
+
+        result = compare_contracts(linux, windows, known)
+
+        self.assertEqual(1, len(result.applied_known_deltas))
+        self.assertEqual(1, len(result.unexpected))
+        self.assertEqual("apps.customApps", result.unexpected[0]["path"])
+        self.assertEqual([], result.unexpected[0]["linux"])
+        self.assertEqual(windows["apps"]["customApps"], result.unexpected[0]["windows"])
+
+    def test_known_delta_does_not_suppress_non_list_custom_apps_diff(self):
+        linux = base_contract("linux")
+        windows = base_contract("windows")
+        del linux["apps"]["customApps"]
+        known = [
+            {
+                "path": "apps.customApps[]",
+                "match": {"publisher": "ALDirectCompile", "name": "Test Runner Extension"},
+                "reason": "Linux runner installs a custom API extension for v1 test orchestration.",
+            }
+        ]
+
+        result = compare_contracts(linux, windows, known)
+
+        self.assertEqual(1, len(result.unexpected))
+        self.assertEqual("apps.customApps", result.unexpected[0]["path"])
 
     def test_known_delta_file_loads_json(self):
         with tempfile.TemporaryDirectory() as temp_dir:

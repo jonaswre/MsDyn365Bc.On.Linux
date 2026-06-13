@@ -10,6 +10,7 @@ from typing import Any
 
 
 IGNORED_TOP_LEVEL_KEYS = {"platform", "diagnostics"}
+MISSING_VALUE = {"__missing__": True}
 
 
 @dataclass
@@ -49,7 +50,9 @@ def flatten_diff(path: str, left: Any, right: Any) -> list[dict[str, Any]]:
         diffs: list[dict[str, Any]] = []
         for key in sorted(set(left) | set(right)):
             child_path = f"{path}.{key}" if path else key
-            diffs.extend(flatten_diff(child_path, left.get(key), right.get(key)))
+            left_value = left[key] if key in left else MISSING_VALUE
+            right_value = right[key] if key in right else MISSING_VALUE
+            diffs.extend(flatten_diff(child_path, left_value, right_value))
         return diffs
     return [{"path": path, "linux": left, "windows": right}]
 
@@ -65,15 +68,27 @@ def apply_known_deltas(diffs: list[dict[str, Any]], known_deltas: list[dict[str,
     applied: list[dict[str, Any]] = []
     for diff in diffs:
         handled = False
-        for delta in known_deltas:
-            if delta.get("path") == "apps.customApps[]" and diff["path"] == "apps.customApps":
-                linux_items = diff.get("linux") if isinstance(diff.get("linux"), list) else []
-                windows_items = diff.get("windows") if isinstance(diff.get("windows"), list) else []
-                extra_linux = [item for item in linux_items if item not in windows_items]
-                if extra_linux and all(item_matches(item, delta.get("match", {})) for item in extra_linux):
-                    applied.append({"delta": delta, "diff": diff})
-                    handled = True
-                    break
+        if diff["path"] == "apps.customApps":
+            if not isinstance(diff.get("linux"), list) or not isinstance(diff.get("windows"), list):
+                unexpected.append(diff)
+                continue
+            linux_items = diff["linux"]
+            windows_items = diff["windows"]
+            remaining_linux = [item for item in linux_items if item not in windows_items]
+            remaining_windows = [item for item in windows_items if item not in linux_items]
+            for delta in known_deltas:
+                if delta.get("path") != "apps.customApps[]":
+                    continue
+                matched_linux = [item for item in remaining_linux if item_matches(item, delta.get("match", {}))]
+                if not matched_linux:
+                    continue
+                applied.append({"delta": delta, "diff": {"path": diff["path"], "linux": matched_linux, "windows": []}})
+                remaining_linux = [item for item in remaining_linux if item not in matched_linux]
+            if not remaining_linux and not remaining_windows:
+                handled = True
+            elif remaining_linux != linux_items or remaining_windows != windows_items:
+                unexpected.append({"path": diff["path"], "linux": remaining_linux, "windows": remaining_windows})
+                handled = True
         if not handled:
             unexpected.append(diff)
     return CompareResult(unexpected=unexpected, applied_known_deltas=applied)
