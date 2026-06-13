@@ -277,6 +277,7 @@ def websocket_probe(url: str, valid_auth: str, invalid_auth: str, diagnostics: d
 def collect_surface(args: argparse.Namespace, diagnostics: dict[str, str]) -> dict[str, dict[str, Any]]:
     endpoints = {
         "management": join_url(args.base_url, "Management"),
+        "webClient": join_url(args.base_url, "client/SignIn"),
         "clientSignIn": join_url(args.base_url, "client/SignIn"),
         "soap": join_url(args.base_url, "WS/Services"),
         "odata": join_url(args.odata_url, "Company"),
@@ -417,8 +418,8 @@ def collect_users(args: argparse.Namespace, diagnostics: dict[str, str], auth: d
         diagnostics["users.collection"] = "user collection skipped: company id unavailable"
         return {
             "authUserName": auth_user_name,
-            "enabledSuperUserCount": 1 if auth["validCredentialsAccepted"] else 0,
-            "knownUserNames": [auth_user_name.upper()],
+            "enabledSuperUserCount": 0,
+            "knownUserNames": [],
             "collectionSucceeded": False,
             "httpClass": "000",
             "permissionCollectionSucceeded": False,
@@ -433,15 +434,10 @@ def collect_users(args: argparse.Namespace, diagnostics: dict[str, str], auth: d
         enabled_super_count, permission_collection_succeeded = collect_user_permissions(args, diagnostics, company_id, users)
     else:
         diagnostics["users.collection"] = f"user collection failed: {http_class(status)} {url}"
-        enabled_super_count = 1 if auth["validCredentialsAccepted"] else 0
+        enabled_super_count = 0
         permission_collection_succeeded = False
 
-    if not permission_collection_succeeded:
-        enabled_super_count = 1 if auth["validCredentialsAccepted"] else 0
-
     known_user_names = sorted({name for name in (user_name(item) for item in users) if name})
-    if not known_user_names:
-        known_user_names = [auth_user_name.upper()]
     return {
         "authUserName": auth_user_name,
         "enabledSuperUserCount": enabled_super_count,

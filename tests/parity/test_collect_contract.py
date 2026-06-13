@@ -99,6 +99,85 @@ class CollectContractTests(unittest.TestCase):
         self.assertEqual({"api", "odata", "dev"}, set(result["endpoints"]))
         self.assertEqual("5xx", result["endpoints"]["dev"]["validHttpClass"])
 
+    def test_collect_surface_includes_web_client(self):
+        args = SimpleNamespace(
+            base_url="http://localhost:7046/BC",
+            api_url="http://localhost:7052/BC/api/v2.0",
+            odata_url="http://localhost:7048/BC/ODataV4",
+            dev_url="http://localhost:7049/BC/dev",
+            auth="admin:admin",
+            invalid_auth="not-admin:not-admin",
+        )
+        probed = {}
+
+        def fake_surface_probe(url, valid_auth, invalid_auth, diagnostics, name):
+            del valid_auth, invalid_auth, diagnostics
+            probed[name] = url
+            return {"tcpOpen": True, "httpClass": "2xx", "requiresAuth": True}
+
+        def fake_websocket_probe(url, valid_auth, invalid_auth, diagnostics):
+            del valid_auth, invalid_auth, diagnostics
+            probed["clientWebSocket"] = url
+            return {"tcpOpen": True, "httpClass": "2xx", "requiresAuth": True, "websocketUpgrade": False}
+
+        original_surface_probe = collect_contract.surface_probe
+        original_websocket_probe = collect_contract.websocket_probe
+        try:
+            collect_contract.surface_probe = fake_surface_probe
+            collect_contract.websocket_probe = fake_websocket_probe
+            surface = collect_contract.collect_surface(args, {})
+        finally:
+            collect_contract.surface_probe = original_surface_probe
+            collect_contract.websocket_probe = original_websocket_probe
+
+        self.assertIn("webClient", surface)
+        self.assertEqual("http://localhost:7046/BC/client/SignIn", probed["webClient"])
+
+    def test_failed_user_collection_returns_empty_discovered_user_fields(self):
+        args = SimpleNamespace(api_url="http://localhost:7052/BC/api/v2.0", auth="admin:admin")
+        diagnostics = {}
+
+        def fake_fetch_json(url, auth, timeout=15):
+            del url, auth, timeout
+            return 500, {}
+
+        original_fetch_json = collect_contract.fetch_json
+        try:
+            collect_contract.fetch_json = fake_fetch_json
+            result = collect_contract.collect_users(args, diagnostics, {"validCredentialsAccepted": True}, "company-id")
+        finally:
+            collect_contract.fetch_json = original_fetch_json
+
+        self.assertFalse(result["collectionSucceeded"])
+        self.assertFalse(result["permissionCollectionSucceeded"])
+        self.assertEqual(0, result["enabledSuperUserCount"])
+        self.assertEqual([], result["knownUserNames"])
+        self.assertEqual("admin", result["authUserName"])
+        self.assertIn("users.collection", diagnostics)
+
+    def test_permission_collection_failure_does_not_synthesize_super_count(self):
+        args = SimpleNamespace(api_url="http://localhost:7052/BC/api/v2.0", auth="admin:admin")
+        diagnostics = {}
+
+        def fake_fetch_json(url, auth, timeout=15):
+            del auth, timeout
+            if url.endswith("/users"):
+                return 200, {"value": [{"userName": "ADMIN", "userSecurityId": "user-1", "enabled": True}]}
+            return 500, {}
+
+        original_fetch_json = collect_contract.fetch_json
+        try:
+            collect_contract.fetch_json = fake_fetch_json
+            result = collect_contract.collect_users(args, diagnostics, {"validCredentialsAccepted": True}, "company-id")
+        finally:
+            collect_contract.fetch_json = original_fetch_json
+
+        self.assertTrue(result["collectionSucceeded"])
+        self.assertFalse(result["permissionCollectionSucceeded"])
+        self.assertEqual(0, result["enabledSuperUserCount"])
+        self.assertEqual(["ADMIN"], result["knownUserNames"])
+        self.assertIn("users.permissions", diagnostics)
+
     def test_summarize_test_output_parses_current_run_tests_format(self):
         output = "Test codeunits: 70000,70001\ntotal=4 passed=4 failed=0 skipped=0\n"
         summary = summarize_test_output(output, "websocket")
