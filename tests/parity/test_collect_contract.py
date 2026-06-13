@@ -60,6 +60,13 @@ class CollectContractTests(unittest.TestCase):
         self.assertEqual([normalize_extension(extensions[0])], custom_apps)
         self.assertTrue(test_framework_present)
 
+    def test_test_framework_any_signal_requires_exact_app_name(self):
+        _, _, company_hub_present = split_apps([{"publisher": "Microsoft", "name": "Company Hub"}])
+        _, _, any_present = split_apps([{"publisher": "Microsoft", "name": " Any "}])
+
+        self.assertFalse(company_hub_present)
+        self.assertTrue(any_present)
+
     def test_super_permission_matches_role_or_permission_set(self):
         self.assertTrue(is_super_permission({"roleId": "super"}))
         self.assertTrue(is_super_permission({"permissionSetId": "SUPER"}))
@@ -144,7 +151,7 @@ class CollectContractTests(unittest.TestCase):
         original_fetch_json = collect_contract.fetch_json
         try:
             collect_contract.fetch_json = fake_fetch_json
-            result = collect_contract.collect_users(args, diagnostics, {"validCredentialsAccepted": True}, "company-id")
+            result = collect_contract.collect_users(args, diagnostics, "company-id")
         finally:
             collect_contract.fetch_json = original_fetch_json
 
@@ -168,7 +175,7 @@ class CollectContractTests(unittest.TestCase):
         original_fetch_json = collect_contract.fetch_json
         try:
             collect_contract.fetch_json = fake_fetch_json
-            result = collect_contract.collect_users(args, diagnostics, {"validCredentialsAccepted": True}, "company-id")
+            result = collect_contract.collect_users(args, diagnostics, "company-id")
         finally:
             collect_contract.fetch_json = original_fetch_json
 
@@ -177,6 +184,56 @@ class CollectContractTests(unittest.TestCase):
         self.assertEqual(0, result["enabledSuperUserCount"])
         self.assertEqual(["ADMIN"], result["knownUserNames"])
         self.assertIn("users.permissions", diagnostics)
+
+    def test_permission_collection_failure_discards_partial_super_count(self):
+        args = SimpleNamespace(api_url="http://localhost:7052/BC/api/v2.0", auth="admin:admin")
+        diagnostics = {}
+
+        def fake_fetch_json(url, auth, timeout=15):
+            del auth, timeout
+            if url.endswith("/users"):
+                return 200, {
+                    "value": [
+                        {"userName": "ADMIN", "userSecurityId": "user-1", "enabled": True},
+                        {"userName": "ALICE", "userSecurityId": "user-2", "enabled": True},
+                    ]
+                }
+            if "user-1" in url:
+                return 200, {"value": [{"permissionSetId": "SUPER"}]}
+            return 500, {}
+
+        original_fetch_json = collect_contract.fetch_json
+        try:
+            collect_contract.fetch_json = fake_fetch_json
+            result = collect_contract.collect_users(args, diagnostics, "company-id")
+        finally:
+            collect_contract.fetch_json = original_fetch_json
+
+        self.assertFalse(result["permissionCollectionSucceeded"])
+        self.assertEqual(0, result["enabledSuperUserCount"])
+        self.assertEqual(["ADMIN", "ALICE"], result["knownUserNames"])
+        self.assertIn("users.permissions", diagnostics)
+
+    def test_record_zero_status_includes_last_fetch_exception_message(self):
+        url = "http://localhost:7049/BC/dev/metadata"
+
+        def fake_urlopen(req, timeout=15):
+            del req, timeout
+            raise RuntimeError("connection exploded")
+
+        original_urlopen = collect_contract.request.urlopen
+        collect_contract.LAST_FETCH_ERRORS.clear()
+        try:
+            collect_contract.request.urlopen = fake_urlopen
+            status, _ = collect_contract.fetch_status(url, "admin:admin")
+        finally:
+            collect_contract.request.urlopen = original_urlopen
+
+        diagnostics = {}
+        collect_contract.record_zero_status(diagnostics, "dev.metadata", url, status)
+
+        self.assertEqual(0, status)
+        self.assertIn("connection exploded", diagnostics["dev.metadata"])
 
     def test_summarize_test_output_parses_current_run_tests_format(self):
         output = "Test codeunits: 70000,70001\ntotal=4 passed=4 failed=0 skipped=0\n"

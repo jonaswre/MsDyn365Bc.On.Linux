@@ -11,6 +11,9 @@ from typing import Any
 from urllib import error, parse, request
 
 
+LAST_FETCH_ERRORS: dict[str, str] = {}
+
+
 def http_class(status: int) -> str:
     if 200 <= status <= 299:
         return "2xx"
@@ -91,10 +94,18 @@ def fetch_json(url: str, auth: str, timeout: int = 15) -> tuple[int, dict]:
     req = request.Request(url, headers={"Authorization": basic_header(auth)})
     try:
         with request.urlopen(req, timeout=timeout) as response:
-            return response.status, json.loads(response.read().decode("utf-8"))
+            status = response.status
+            payload = json.loads(response.read().decode("utf-8"))
+            LAST_FETCH_ERRORS.pop(url, None)
+            return status, payload
+    except json.JSONDecodeError as exc:
+        LAST_FETCH_ERRORS[url] = f"{type(exc).__name__}: {exc}"
+        return 0, {}
     except error.HTTPError as exc:
+        LAST_FETCH_ERRORS.pop(url, None)
         return exc.code, {}
-    except Exception:
+    except Exception as exc:
+        LAST_FETCH_ERRORS[url] = f"{type(exc).__name__}: {exc}"
         return 0, {}
 
 
@@ -121,10 +132,13 @@ def fetch_status(url: str, auth: str | None = None, headers: dict[str, str] | No
     req = request.Request(url, headers=request_headers)
     try:
         with request.urlopen(req, timeout=timeout) as response:
+            LAST_FETCH_ERRORS.pop(url, None)
             return response.status, dict(response.headers.items())
     except error.HTTPError as exc:
+        LAST_FETCH_ERRORS.pop(url, None)
         return exc.code, dict(exc.headers.items())
-    except Exception:
+    except Exception as exc:
+        LAST_FETCH_ERRORS[url] = f"{type(exc).__name__}: {exc}"
         return 0, {}
 
 
@@ -182,9 +196,9 @@ def app_sort_key(item: dict[str, str]) -> tuple[str, str, str, str]:
 
 
 def has_test_framework_signal(app: dict[str, str]) -> bool:
-    name = app.get("name", "").lower()
-    signals = ("test runner", "library assert", "library variable storage", "permissions mock", "any")
-    return any(signal in name for signal in signals)
+    name = normalize_company_name(app.get("name", "")).lower()
+    substring_signals = ("test runner", "library assert", "library variable storage", "permissions mock")
+    return name == "any" or any(signal in name for signal in substring_signals)
 
 
 def split_apps(items: list[dict[str, Any]]) -> tuple[list[dict[str, str]], list[dict[str, str]], bool]:
@@ -240,7 +254,8 @@ def parse_diagnostics(values: list[str]) -> dict[str, str]:
 
 def record_zero_status(diagnostics: dict[str, str], key: str, url: str, status: int) -> None:
     if status == 0:
-        diagnostics[key] = f"request failed: {url}"
+        error_message = LAST_FETCH_ERRORS.get(url)
+        diagnostics[key] = f"request failed: {url}: {error_message}" if error_message else f"request failed: {url}"
 
 
 def surface_probe(url: str, valid_auth: str, invalid_auth: str, diagnostics: dict[str, str], name: str) -> dict[str, Any]:
@@ -412,7 +427,7 @@ def collect_user_permissions(
     return super_count, permission_collection_succeeded
 
 
-def collect_users(args: argparse.Namespace, diagnostics: dict[str, str], auth: dict[str, Any], company_id: Any | None) -> dict[str, Any]:
+def collect_users(args: argparse.Namespace, diagnostics: dict[str, str], company_id: Any | None) -> dict[str, Any]:
     auth_user_name = args.auth.split(":", 1)[0]
     if company_id is None:
         diagnostics["users.collection"] = "user collection skipped: company id unavailable"
@@ -436,6 +451,9 @@ def collect_users(args: argparse.Namespace, diagnostics: dict[str, str], auth: d
         diagnostics["users.collection"] = f"user collection failed: {http_class(status)} {url}"
         enabled_super_count = 0
         permission_collection_succeeded = False
+
+    if not permission_collection_succeeded:
+        enabled_super_count = 0
 
     known_user_names = sorted({name for name in (user_name(item) for item in users) if name})
     return {
@@ -487,7 +505,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "dev": collect_dev(args, diagnostics),
         "tests": collect_tests(args.test_output, args.runner_kind, diagnostics),
         "apps": collect_apps(args, diagnostics, company_id),
-        "users": collect_users(args, diagnostics, auth, company_id),
+        "users": collect_users(args, diagnostics, company_id),
         "diagnostics": diagnostics,
     }
 
