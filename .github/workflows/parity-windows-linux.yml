@@ -1,0 +1,166 @@
+name: Windows/Linux BC parity
+
+on:
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: 'BC versions to compare'
+        required: false
+        default: '27.5,28.1'
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - id: matrix
+        run: |
+          versions='${{ inputs.versions }}'
+          python3 - <<'PY' "$versions" >> "$GITHUB_OUTPUT"
+          import json, sys
+          versions = [item.strip() for item in sys.argv[1].split(",") if item.strip()]
+          print("matrix=" + json.dumps({"bc_version": versions}))
+          PY
+
+  build-smoke-app:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download BC artifacts
+        run: |
+          mkdir -p artifact-cache/${{ matrix.bc_version }}
+          scripts/download-artifacts.sh onprem ${{ matrix.bc_version }} w1 artifact-cache/${{ matrix.bc_version }}
+      - name: Install AL compiler and compile smoke app
+        run: |
+          BC_MAJOR=$(echo "${{ matrix.bc_version }}" | cut -d. -f1)
+          case "$BC_MAJOR" in
+            27) AL_TOOL="16.2.28.57946"; RUNTIME="16.0" ;;
+            28) AL_TOOL="17.0.34.45391"; RUNTIME="17.0" ;;
+            *) echo "Unsupported BC major $BC_MAJOR"; exit 1 ;;
+          esac
+          export RUNTIME
+          PKG="microsoft.dynamics.businesscentral.development.tools.linux"
+          EXTRACT_DIR="$HOME/.al-tool-cache/$AL_TOOL"
+          mkdir -p "$EXTRACT_DIR"
+          curl -fsSL "https://api.nuget.org/v3-flatcontainer/${PKG}/${AL_TOOL}/${PKG}.${AL_TOOL}.nupkg" -o "$EXTRACT_DIR/pkg.zip"
+          unzip -q -o "$EXTRACT_DIR/pkg.zip" -d "$EXTRACT_DIR"
+          rm "$EXTRACT_DIR/pkg.zip"
+          AL_TOOL_DIR="$EXTRACT_DIR/tools/net8.0/any"
+          if [ ! -d "$AL_TOOL_DIR" ]; then AL_TOOL_DIR="$EXTRACT_DIR/lib/net8.0"; fi
+          printf '#!/usr/bin/env bash\nexec dotnet "%s/Microsoft.Dynamics.BusinessCentral.Development.Tools.dll" "$@"\n' "$AL_TOOL_DIR" > "$HOME/al"
+          chmod +x "$HOME/al"
+          echo "$HOME" >> "$GITHUB_PATH"
+          python3 scripts/stage-symbols.py \
+            --artifact-dir artifact-cache/${{ matrix.bc_version }} \
+            --app-json extensions/smoke-test/app.json \
+            --out-dir extensions/smoke-test/.alpackages
+          python3 - <<'PY'
+          import os
+          import json
+          from pathlib import Path
+          path = Path("extensions/smoke-test/app.json")
+          data = json.loads(path.read_text())
+          data["runtime"] = os.environ["RUNTIME"]
+          path.write_text(json.dumps(data, indent=2) + "\n")
+          PY
+          "$HOME/al" compile "/project:extensions/smoke-test" "/packagecachepath:extensions/smoke-test/.alpackages" "/out:smoke-test-${{ matrix.bc_version }}.app"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smoke-app-${{ matrix.bc_version }}
+          path: smoke-test-${{ matrix.bc_version }}.app
+
+  linux-contract:
+    needs: [prepare, build-smoke-app]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    env:
+      BC_VERSION: ${{ matrix.bc_version }}
+      BC_COUNTRY: w1
+      BC_TYPE: onprem
+      BC_USERNAME: admin
+      BC_PASSWORD: admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: smoke-app-${{ matrix.bc_version }}
+          path: build
+      - name: Start Linux BC
+        run: |
+          docker compose up -d
+          scripts/wait-for-bc-healthy.sh 30
+      - name: Collect Linux contract
+        run: |
+          parity/collect-linux-contract.sh "build/smoke-test-${{ matrix.bc_version }}.app" "${{ matrix.bc_version }}" "contracts/linux-${{ matrix.bc_version }}.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: contract-linux-${{ matrix.bc_version }}
+          path: contracts/linux-${{ matrix.bc_version }}.json
+
+  windows-contract:
+    needs: [prepare, build-smoke-app]
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: smoke-app-${{ matrix.bc_version }}
+          path: build
+      - name: Collect Windows contract
+        shell: pwsh
+        run: |
+          .\parity\collect-windows-contract.ps1 -BcVersion "${{ matrix.bc_version }}" -SmokeAppPath "$PWD\build\smoke-test-${{ matrix.bc_version }}.app" -OutJson "$PWD\contracts\windows-${{ matrix.bc_version }}.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: contract-windows-${{ matrix.bc_version }}
+          path: contracts/windows-${{ matrix.bc_version }}.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnostics-windows-${{ matrix.bc_version }}
+          path: |
+            C:\ProgramData\BcContainerHelper\**
+            contracts\**
+            ${{ runner.temp }}\*.log
+            ${{ runner.temp }}\*.xml
+          if-no-files-found: ignore
+
+  compare-contracts:
+    needs: [prepare, linux-contract, windows-contract]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: contract-linux-${{ matrix.bc_version }}
+          path: contracts
+      - uses: actions/download-artifact@v4
+        with:
+          name: contract-windows-${{ matrix.bc_version }}
+          path: contracts
+      - name: Compare contracts
+        run: |
+          python3 parity/compare_contracts.py \
+            --linux "contracts/linux-${{ matrix.bc_version }}.json" \
+            --windows "contracts/windows-${{ matrix.bc_version }}.json" \
+            --known-deltas parity/known-deltas.json
