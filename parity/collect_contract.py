@@ -28,11 +28,15 @@ def normalize_company_name(value: str) -> str:
 
 
 def parse_dev_api_major(metadata: dict) -> int | None:
+    if not isinstance(metadata, dict):
+        return None
     versions = metadata.get("supportedVersions")
     if not isinstance(versions, list):
         return None
     majors = []
     for item in versions:
+        if not isinstance(item, dict):
+            continue
         raw = str(item.get("apiVersion", ""))
         head = raw.split(".", 1)[0]
         if head.isdigit():
@@ -152,6 +156,77 @@ def company_name(company: dict[str, Any]) -> str:
     return ""
 
 
+def automation_base_url(api_url: str) -> str:
+    trimmed = api_url.rstrip("/")
+    suffix = "/api/v2.0"
+    if trimmed.lower().endswith(suffix):
+        return trimmed[: -len(suffix)] + "/api/microsoft/automation/v2.0"
+    return trimmed + "/microsoft/automation/v2.0"
+
+
+def company_segment(company_id: Any) -> str:
+    return f"companies({parse.quote(str(company_id), safe='')})"
+
+
+def normalize_extension(item: dict[str, Any]) -> dict[str, str]:
+    return {
+        "publisher": str(item.get("publisher", "")),
+        "name": str(item.get("name", "")),
+        "id": str(item.get("packageId") or item.get("id") or item.get("appId") or ""),
+        "version": str(item.get("version") or item.get("appVersion") or item.get("packageVersion") or ""),
+    }
+
+
+def app_sort_key(item: dict[str, str]) -> tuple[str, str, str, str]:
+    return (item.get("publisher", ""), item.get("name", ""), item.get("id", ""), item.get("version", ""))
+
+
+def has_test_framework_signal(app: dict[str, str]) -> bool:
+    name = app.get("name", "").lower()
+    signals = ("test runner", "library assert", "library variable storage", "permissions mock", "any")
+    return any(signal in name for signal in signals)
+
+
+def split_apps(items: list[dict[str, Any]]) -> tuple[list[dict[str, str]], list[dict[str, str]], bool]:
+    normalized = [normalize_extension(item) for item in items]
+    microsoft_apps = sorted((item for item in normalized if item["publisher"] == "Microsoft"), key=app_sort_key)
+    custom_apps = sorted((item for item in normalized if item["publisher"] != "Microsoft"), key=app_sort_key)
+    return microsoft_apps, custom_apps, any(has_test_framework_signal(item) for item in normalized)
+
+
+def user_name(item: dict[str, Any]) -> str:
+    for key in ("userName", "name", "displayName", "fullName"):
+        value = normalize_company_name(str(item.get(key, "")))
+        if value:
+            return value
+    return ""
+
+
+def user_security_id(item: dict[str, Any]) -> str:
+    for key in ("userSecurityId", "securityId", "id"):
+        value = str(item.get(key, ""))
+        if value:
+            return value
+    return ""
+
+
+def user_enabled(item: dict[str, Any]) -> bool:
+    enabled = item.get("enabled")
+    if isinstance(enabled, bool):
+        return enabled
+    state = str(item.get("state") or item.get("status") or "").lower()
+    if state in ("disabled", "inactive"):
+        return False
+    return True
+
+
+def is_super_permission(item: dict[str, Any]) -> bool:
+    for key in ("roleId", "permissionSetId"):
+        if str(item.get(key, "")).upper() == "SUPER":
+            return True
+    return False
+
+
 def parse_diagnostics(values: list[str]) -> dict[str, str]:
     diagnostics: dict[str, str] = {}
     for index, value in enumerate(values):
@@ -214,16 +289,36 @@ def collect_surface(args: argparse.Namespace, diagnostics: dict[str, str]) -> di
     return surface
 
 
-def collect_auth(args: argparse.Namespace, diagnostics: dict[str, str]) -> dict[str, Any]:
-    url = join_url(args.api_url, "companies")
-    valid_status, _ = fetch_status(url, args.auth)
-    invalid_status, invalid_headers = fetch_status(url, args.invalid_auth)
-    record_zero_status(diagnostics, "auth.valid", url, valid_status)
-    record_zero_status(diagnostics, "auth.invalid", url, invalid_status)
+def auth_endpoints(args: argparse.Namespace) -> dict[str, str]:
     return {
-        "validCredentialsAccepted": 200 <= valid_status <= 299,
-        "invalidCredentialsRejected": invalid_status in (401, 403),
-        "authSchemeClass": auth_scheme_class(invalid_headers),
+        "api": join_url(args.api_url, "companies"),
+        "odata": join_url(args.odata_url, "Company"),
+        "dev": join_url(args.dev_url, "metadata"),
+    }
+
+
+def collect_auth(args: argparse.Namespace, diagnostics: dict[str, str]) -> dict[str, Any]:
+    endpoint_details: dict[str, dict[str, Any]] = {}
+    auth_scheme = "unknown"
+    for name, url in auth_endpoints(args).items():
+        valid_status, _ = fetch_status(url, args.auth)
+        invalid_status, invalid_headers = fetch_status(url, args.invalid_auth)
+        record_zero_status(diagnostics, f"auth.{name}.valid", url, valid_status)
+        record_zero_status(diagnostics, f"auth.{name}.invalid", url, invalid_status)
+        scheme = auth_scheme_class(invalid_headers)
+        if auth_scheme == "unknown" and scheme != "unknown":
+            auth_scheme = scheme
+        endpoint_details[name] = {
+            "validHttpClass": http_class(valid_status),
+            "invalidHttpClass": http_class(invalid_status),
+            "validAccepted": 200 <= valid_status <= 299,
+            "invalidRejected": invalid_status in (401, 403),
+        }
+    return {
+        "validCredentialsAccepted": all(detail["validAccepted"] for detail in endpoint_details.values()),
+        "invalidCredentialsRejected": all(detail["invalidRejected"] for detail in endpoint_details.values()),
+        "authSchemeClass": auth_scheme,
+        "endpoints": endpoint_details,
     }
 
 
@@ -242,6 +337,118 @@ def collect_company(args: argparse.Namespace, diagnostics: dict[str, str]) -> di
         "firstCompanyName": company_name(first_company),
         "apiCompanyShape": sorted(api_companies[0].keys()) if api_companies else [],
         "odataCompanyShape": sorted(odata_companies[0].keys()) if odata_companies else [],
+    }
+
+
+def first_company_id(args: argparse.Namespace, diagnostics: dict[str, str]) -> Any | None:
+    api_url = join_url(args.api_url, "companies")
+    api_status, api_payload = fetch_json(api_url, args.auth)
+    record_zero_status(diagnostics, "automation.company", api_url, api_status)
+    if not 200 <= api_status <= 299:
+        diagnostics["automation.company"] = f"company id collection failed: {http_class(api_status)} {api_url}"
+        return None
+    companies = extract_items(api_payload)
+    if not companies:
+        diagnostics["automation.company"] = "company id collection failed: no companies returned"
+        return None
+    company_id = companies[0].get("id")
+    if not company_id:
+        diagnostics["automation.company"] = "company id collection failed: first company has no id"
+        return None
+    return company_id
+
+
+def collect_apps(args: argparse.Namespace, diagnostics: dict[str, str], company_id: Any | None) -> dict[str, Any]:
+    if company_id is None:
+        diagnostics["apps.collection"] = "extension collection skipped: company id unavailable"
+        return {
+            "microsoftApps": [],
+            "customApps": [],
+            "testFrameworkPresent": False,
+            "collectionSucceeded": False,
+            "httpClass": "000",
+        }
+    url = join_url(automation_base_url(args.api_url), f"{company_segment(company_id)}/extensions")
+    status, payload = fetch_json(url, args.auth)
+    record_zero_status(diagnostics, "apps.collection", url, status)
+    items = extract_items(payload)
+    collection_succeeded = 200 <= status <= 299
+    if not collection_succeeded:
+        diagnostics["apps.collection"] = f"extension collection failed: {http_class(status)} {url}"
+    microsoft_apps, custom_apps, test_framework_present = split_apps(items if collection_succeeded else [])
+    return {
+        "microsoftApps": microsoft_apps,
+        "customApps": custom_apps,
+        "testFrameworkPresent": test_framework_present,
+        "collectionSucceeded": collection_succeeded,
+        "httpClass": http_class(status),
+    }
+
+
+def collect_user_permissions(
+    args: argparse.Namespace, diagnostics: dict[str, str], company_id: Any, users: list[dict[str, Any]]
+) -> tuple[int, bool]:
+    super_count = 0
+    permission_collection_succeeded = True
+    base_url = automation_base_url(args.api_url)
+    for item in users:
+        if not user_enabled(item):
+            continue
+        security_id = user_security_id(item)
+        if not security_id:
+            diagnostics["users.permissions"] = "permission collection failed: enabled user has no security id"
+            permission_collection_succeeded = False
+            break
+        url = join_url(base_url, f"{company_segment(company_id)}/users({parse.quote(security_id, safe='')})/userPermissions")
+        status, payload = fetch_json(url, args.auth)
+        record_zero_status(diagnostics, f"users.permissions.{security_id}", url, status)
+        if not 200 <= status <= 299:
+            diagnostics["users.permissions"] = f"permission collection failed: {http_class(status)} {url}"
+            permission_collection_succeeded = False
+            break
+        if any(is_super_permission(permission) for permission in extract_items(payload)):
+            super_count += 1
+    return super_count, permission_collection_succeeded
+
+
+def collect_users(args: argparse.Namespace, diagnostics: dict[str, str], auth: dict[str, Any], company_id: Any | None) -> dict[str, Any]:
+    auth_user_name = args.auth.split(":", 1)[0]
+    if company_id is None:
+        diagnostics["users.collection"] = "user collection skipped: company id unavailable"
+        return {
+            "authUserName": auth_user_name,
+            "enabledSuperUserCount": 1 if auth["validCredentialsAccepted"] else 0,
+            "knownUserNames": [auth_user_name.upper()],
+            "collectionSucceeded": False,
+            "httpClass": "000",
+            "permissionCollectionSucceeded": False,
+        }
+
+    url = join_url(automation_base_url(args.api_url), f"{company_segment(company_id)}/users")
+    status, payload = fetch_json(url, args.auth)
+    record_zero_status(diagnostics, "users.collection", url, status)
+    collection_succeeded = 200 <= status <= 299
+    users = extract_items(payload) if collection_succeeded else []
+    if collection_succeeded:
+        enabled_super_count, permission_collection_succeeded = collect_user_permissions(args, diagnostics, company_id, users)
+    else:
+        diagnostics["users.collection"] = f"user collection failed: {http_class(status)} {url}"
+        enabled_super_count = 1 if auth["validCredentialsAccepted"] else 0
+        permission_collection_succeeded = False
+
+    if not permission_collection_succeeded:
+        enabled_super_count = 1 if auth["validCredentialsAccepted"] else 0
+
+    known_user_names = sorted({name for name in (user_name(item) for item in users) if name})
+    if not known_user_names:
+        known_user_names = [auth_user_name.upper()]
+    return {
+        "authUserName": auth_user_name,
+        "enabledSuperUserCount": enabled_super_count,
+        "knownUserNames": known_user_names,
+        "collectionSucceeded": collection_succeeded,
+        "httpClass": http_class(status),
+        "permissionCollectionSucceeded": permission_collection_succeeded,
     }
 
 
@@ -273,6 +480,7 @@ def collect_tests(test_output_path: Path, runner_kind: str, diagnostics: dict[st
 def build_contract(args: argparse.Namespace) -> dict[str, Any]:
     diagnostics = parse_diagnostics(args.diagnostic)
     auth = collect_auth(args, diagnostics)
+    company_id = first_company_id(args, diagnostics)
     return {
         "schemaVersion": 1,
         "platform": args.platform,
@@ -282,16 +490,8 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "company": collect_company(args, diagnostics),
         "dev": collect_dev(args, diagnostics),
         "tests": collect_tests(args.test_output, args.runner_kind, diagnostics),
-        "apps": {
-            "microsoftApps": [],
-            "customApps": [],
-            "testFrameworkPresent": False,
-        },
-        "users": {
-            "authUserName": args.auth.split(":", 1)[0],
-            "enabledSuperUserCount": 1 if auth["validCredentialsAccepted"] else 0,
-            "knownUserNames": [args.auth.split(":", 1)[0].upper()],
-        },
+        "apps": collect_apps(args, diagnostics, company_id),
+        "users": collect_users(args, diagnostics, auth, company_id),
         "diagnostics": diagnostics,
     }
 
