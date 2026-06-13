@@ -160,7 +160,7 @@ jobs:
 
   compare-contracts:
     needs: [prepare, linux-contract, windows-contract]
-    if: ${{ always() }}
+    if: ${{ always() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
