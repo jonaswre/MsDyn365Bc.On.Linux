@@ -7,6 +7,8 @@ out_json="${3:?usage: collect-linux-contract.sh <smoke-app> <bc-version> <out-js
 auth="${BC_USERNAME:-admin}:${BC_PASSWORD:-admin}"
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
 test_log="$(mktemp)"
+trap 'rm -f "$test_log"' EXIT
+test_status=0
 
 mkdir -p "$(dirname "$out_json")"
 
@@ -15,7 +17,7 @@ mkdir -p "$(dirname "$out_json")"
   --auth "$auth" \
   --base-url "http://localhost:7046/BC" \
   --codeunit-range "70000|70001" \
-  --timeout 30 2>&1 | tee "$test_log"
+  --timeout 30 2>&1 | tee "$test_log" || test_status=$?
 
 python3 "$repo_dir/parity/collect_contract.py" \
   --platform linux \
@@ -30,3 +32,5 @@ python3 "$repo_dir/parity/collect_contract.py" \
   --runner-kind websocket \
   --diagnostic "docker=$(docker --version 2>/dev/null || true)" \
   --out "$out_json"
+
+exit "$test_status"
