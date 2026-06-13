@@ -40,6 +40,16 @@ function Invoke-NativeChecked([string]$CapabilityCode, [string[]]$Command) {
 Invoke-NativeChecked "WINDOWS_RUNNER_DOCKER_UNAVAILABLE" @("docker", "version")
 Invoke-NativeChecked "WINDOWS_RUNNER_WINDOWS_CONTAINERS_UNAVAILABLE" @("docker", "run", "--rm", "mcr.microsoft.com/windows/nanoserver:ltsc2022", "cmd", "/c", "ver")
 
+$dockerServerVersion = "unknown"
+try {
+    $dockerVersionOutput = & docker version --format '{{.Server.Version}}' 2>$null
+    if ($LASTEXITCODE -eq 0 -and $dockerVersionOutput) {
+        $dockerServerVersion = ($dockerVersionOutput | Select-Object -First 1)
+    }
+} catch {
+    $dockerServerVersion = "unknown"
+}
+
 try {
     Install-PackageProvider -Name NuGet -Force | Out-Null
     Install-Module BcContainerHelper -Force -AllowClobber
@@ -51,9 +61,9 @@ try {
 
 $securePassword = ConvertTo-SecureString $Password -AsPlainText -Force
 $credential = [pscredential]::new($Username, $securePassword)
-$artifactUrl = Get-BCArtifactUrl -Type OnPrem -Country w1 -Version $BcVersion
 
 try {
+    $artifactUrl = Get-BCArtifactUrl -Type OnPrem -Country w1 -Version $BcVersion
     New-BcContainer `
         -accept_eula `
         -containerName $ContainerName `
@@ -62,33 +72,55 @@ try {
         -auth UserPassword `
         -isolation process `
         -updateHosts `
+        -includeTestToolkit `
         -shortcuts None
 } catch {
     Fail-Capability "WINDOWS_BC_CONTAINER_START_FAILED" $_.Exception.Message
 }
 
-$testLog = Join-Path $env:RUNNER_TEMP "bc-parity-tests-$BcVersion.log"
+$runnerTemp = $env:RUNNER_TEMP
+if (-not $runnerTemp) {
+    $runnerTemp = [IO.Path]::GetTempPath()
+}
+
+$testLog = Join-Path $runnerTemp "bc-parity-tests-$BcVersion.log"
+$xunitPath = Join-Path $runnerTemp "bc-parity-$BcVersion.xml"
+$testStatus = 0
 try {
     Publish-BcContainerApp -containerName $ContainerName -appFile $SmokeAppPath -sync -install -skipVerification
-    $results = Run-TestsInBcContainer -containerName $ContainerName -credential $credential -extensionId "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" -XUnitResultFileName (Join-Path $env:RUNNER_TEMP "bc-parity-$BcVersion.xml")
+    $results = Run-TestsInBcContainer -containerName $ContainerName -credential $credential -extensionId "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" -XUnitResultFileName $xunitPath
     $results | Out-String | Tee-Object -FilePath $testLog
 } catch {
+    $testStatus = 1
     "Test codeunits: 70000,70001" | Set-Content -Path $testLog
     "total=0 passed=0 failed=1 skipped=0" | Add-Content -Path $testLog
     $_.Exception.Message | Add-Content -Path $testLog
 }
 
-python "$repoRoot\parity\collect_contract.py" `
-    --platform windows `
-    --bc-version $BcVersion `
-    --base-url "http://localhost:7046/BC" `
-    --dev-url "http://localhost:7049/BC/dev" `
-    --odata-url "http://localhost:7048/BC/ODataV4" `
-    --api-url "http://localhost:7052/BC/api/v2.0" `
-    --auth "$Username`:$Password" `
-    --invalid-auth "not-admin:not-admin" `
-    --test-output $testLog `
-    --runner-kind bccontainerhelper `
-    --diagnostic "artifactUrl=$artifactUrl" `
-    --diagnostic "bcContainerHelper=$((Get-Module BcContainerHelper).Version)" `
-    --out $OutJson
+try {
+    & python "$repoRoot\parity\collect_contract.py" `
+        --platform windows `
+        --bc-version $BcVersion `
+        --base-url "http://localhost:7046/BC" `
+        --dev-url "http://localhost:7049/BC/dev" `
+        --odata-url "http://localhost:7048/BC/ODataV4" `
+        --api-url "http://localhost:7052/BC/api/v2.0" `
+        --auth "$Username`:$Password" `
+        --invalid-auth "not-admin:not-admin" `
+        --test-output $testLog `
+        --runner-kind bccontainerhelper `
+        --diagnostic "artifactUrl=$artifactUrl" `
+        --diagnostic "bcContainerHelper=$((Get-Module BcContainerHelper).Version)" `
+        --diagnostic "dockerServerVersion=$dockerServerVersion" `
+        --out $OutJson
+} catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+}
+
+$collectorStatus = $LASTEXITCODE
+if ($collectorStatus -ne 0) {
+    exit $collectorStatus
+}
+
+exit $testStatus
