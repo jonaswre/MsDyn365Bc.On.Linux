@@ -153,7 +153,7 @@ try {
             "Run-TestsInBcContainer returned false" | Add-Content -Path $testLog
         } elseif ($summary.Total -ne 4) {
             $testStatus = 1
-            Write-FailedTestSummary -TestLog $testLog -Message "Expected 4 tests in XUnit result, found $($summary.Total): $xunitPath"
+            "Expected 4 tests in XUnit result, found $($summary.Total): $xunitPath" | Add-Content -Path $testLog
         } elseif ($summary.Failed -ne 0) {
             $testStatus = 1
             "XUnit result reported $($summary.Failed) failed tests" | Add-Content -Path $testLog
