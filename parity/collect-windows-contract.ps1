@@ -17,17 +17,28 @@ function Fail-Capability($Code, $Message) {
     exit 1
 }
 
-try {
-    docker version | Out-Host
-} catch {
-    Fail-Capability "WINDOWS_RUNNER_DOCKER_UNAVAILABLE" $_.Exception.Message
+function Invoke-NativeChecked([string]$CapabilityCode, [string[]]$Command) {
+    try {
+        if ($Command.Length -eq 0) {
+            Fail-Capability $CapabilityCode "no command provided"
+        }
+
+        if ($Command.Length -eq 1) {
+            & $Command[0] 2>&1 | Out-Host
+        } else {
+            & $Command[0] @($Command[1..($Command.Length - 1)]) 2>&1 | Out-Host
+        }
+    } catch {
+        Fail-Capability $CapabilityCode $_.Exception.Message
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+        Fail-Capability $CapabilityCode "exit code $LASTEXITCODE"
+    }
 }
 
-try {
-    docker run --rm mcr.microsoft.com/windows/nanoserver:ltsc2022 cmd /c ver | Out-Host
-} catch {
-    Fail-Capability "WINDOWS_RUNNER_WINDOWS_CONTAINERS_UNAVAILABLE" $_.Exception.Message
-}
+Invoke-NativeChecked "WINDOWS_RUNNER_DOCKER_UNAVAILABLE" @("docker", "version")
+Invoke-NativeChecked "WINDOWS_RUNNER_WINDOWS_CONTAINERS_UNAVAILABLE" @("docker", "run", "--rm", "mcr.microsoft.com/windows/nanoserver:ltsc2022", "cmd", "/c", "ver")
 
 try {
     Install-PackageProvider -Name NuGet -Force | Out-Null
