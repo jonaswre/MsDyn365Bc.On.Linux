@@ -21,7 +21,8 @@ def is_safe_target(root: Path, target: Path) -> bool:
 def should_extract(name: str, patterns: list[str]) -> bool:
     if not patterns:
         return True
-    return any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)
+    lower_name = name.lower()
+    return any(fnmatch.fnmatchcase(lower_name, pattern.lower()) for pattern in patterns)
 
 
 def extract_zip(archive: Path, destination: Path, patterns: list[str]) -> int:
