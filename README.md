@@ -14,6 +14,15 @@ The `--wait` flag returns once BC is healthy. **First boot takes ~5 minutes**
 (artifact download + database restore + extension compilation). Subsequent
 starts take ~1 minute.
 
+You don't need to build anything: `docker compose up` **pulls the prebuilt,
+publicly accessible image** (`ghcr.io/stefanmaron/msdyn365bc.on.linux/bc-runner:latest`)
+when it isn't already in your local cache — no GHCR auth required. To grab a
+newer published build later, run `docker compose pull`. Only contributors
+hacking on the image itself need `docker compose build` (an explicit build
+tags the same ref locally, so it then takes precedence over the pull — run
+`docker compose build` again after changing `src/` or `scripts/`, or
+`docker compose pull` to drop back to the published image).
+
 When the command returns, BC is running with a CRONUS demo database, dev
 endpoint, OData, API, and the test toolkit (Test Runner, Library Assert,
 Variable Storage, Permissions Mock, Any, System Application Test Library,

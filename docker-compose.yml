@@ -23,7 +23,15 @@ services:
       start_period: 20s
 
   bc:
-    image: ${BC_RUNNER_IMAGE:-bc-runner:local}
+    image: ${BC_RUNNER_IMAGE:-ghcr.io/stefanmaron/msdyn365bc.on.linux/bc-runner:latest}
+    # Pull the published image if it's not already in the local cache. Because a
+    # `build:` section is present, Compose would otherwise BUILD on first `up`
+    # (the Build Spec default) — which forces every community user through a
+    # 5-10 min local build. `missing` flips that to pull-by-default; only an
+    # explicit `docker compose build` rebuilds. Developers iterating on the image
+    # build locally (which tags this same ref), so their build shadows the pull.
+    # To track newer published builds: `docker compose pull bc`.
+    pull_policy: missing
     platform: linux/amd64
     build:
       context: .
