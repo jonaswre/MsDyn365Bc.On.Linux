@@ -87,9 +87,23 @@ try {
 }
 
 try {
-    Install-PackageProvider -Name NuGet -Force | Out-Null
-    Install-Module BcContainerHelper -Force -AllowClobber
-    Import-Module BcContainerHelper
+    try {
+        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
+        Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+        Install-Module BcContainerHelper -Force -AllowClobber -Scope CurrentUser -Repository PSGallery
+    } catch {
+        $moduleRoot = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "PowerShell\Modules\BcContainerHelper"
+        $packagePath = Join-Path $env:RUNNER_TEMP "BcContainerHelper.nupkg"
+        $extractPath = Join-Path $env:RUNNER_TEMP "BcContainerHelper"
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $moduleRoot, $extractPath, $packagePath
+        New-Item -ItemType Directory -Force -Path $moduleRoot | Out-Null
+        Invoke-WebRequest `
+            -Uri "https://www.powershellgallery.com/api/v2/package/BcContainerHelper" `
+            -OutFile $packagePath
+        Expand-Archive -Path $packagePath -DestinationPath $extractPath -Force
+        Copy-Item -Path (Join-Path $extractPath "*") -Destination $moduleRoot -Recurse -Force
+    }
+    Import-Module BcContainerHelper -Force
     Get-Module BcContainerHelper | Format-List Name,Version | Out-Host
 } catch {
     Fail-Capability "BC_CONTAINER_HELPER_UNAVAILABLE" $_.Exception.Message

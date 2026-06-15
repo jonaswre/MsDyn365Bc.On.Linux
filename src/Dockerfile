@@ -7,7 +7,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev &
 
 WORKDIR /build
 COPY src/ src/
-COPY tools/ tools/
 RUN cd src/StartupHook && dotnet publish -c Release -o /build/output/hook
 
 RUN cp /build/src/stubs/DrawingStub/bin/Release/net8.0/System.Drawing.Common.dll /build/output/DrawingStub.dll
