@@ -16,6 +16,8 @@
 set -e
 
 _ms() { date +%s%3N; }
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+EXTRACT_ZIP="$SCRIPT_DIR/extract-zip-normalized.py"
 
 # Parse arguments: either (url, dest) or (type, version, country, dest)
 if [ $# -eq 2 ]; then
@@ -148,7 +150,7 @@ echo "[artifacts] Downloaded: app=$(du -h "$TMPDIR_DL/app.zip" | cut -f1) platfo
 # ── Extract ────────────────────────────────────────────────────────────────
 echo "[artifacts] Extracting app..."
 T_EXTRACT=$(_ms)
-unzip -qo "$TMPDIR_DL/app.zip" -d "$DEST/app"
+python3 "$EXTRACT_ZIP" "$TMPDIR_DL/app.zip" "$DEST/app"
 
 PLATFORM_VERSION=$(python3 -c "import json; print(json.load(open('$DEST/app/manifest.json'))['platform'])" 2>/dev/null)
 echo "[artifacts] Platform version: $PLATFORM_VERSION"
@@ -156,8 +158,9 @@ echo "[artifacts] Platform version: $PLATFORM_VERSION"
 echo "[artifacts] Extracting platform (ServiceTier, ModernDev, WebClient, applications, Test Assemblies)..."
 # Selective extraction keeps only what the service tier needs (~50% of the zip)
 # WebClient is needed for TestPage client DLLs (page testability in tests)
-unzip -qo "$TMPDIR_DL/platform.zip" 'ServiceTier/*' 'ModernDev/*' 'WebClient/*' 'applications/*' 'Test Assemblies/*' -d "$DEST/platform" 2>/dev/null || \
-    unzip -qo "$TMPDIR_DL/platform.zip" -d "$DEST/platform"
+python3 "$EXTRACT_ZIP" "$TMPDIR_DL/platform.zip" "$DEST/platform" \
+    'ServiceTier/*' 'ModernDev/*' 'WebClient/*' 'applications/*' 'Test Assemblies/*' || \
+    python3 "$EXTRACT_ZIP" "$TMPDIR_DL/platform.zip" "$DEST/platform"
 
 T_DONE=$(_ms)
 EXTRACT_MS=$(( T_DONE - T_EXTRACT ))
