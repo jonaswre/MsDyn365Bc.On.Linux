@@ -195,6 +195,8 @@ MANIFEST="$ARTIFACTS/app/manifest.json"
 ls -la "$MANIFEST" || { log_step "FATAL: manifest.json not found at $MANIFEST"; exit 1; }
 DB_FILE=$(python3 -c "import json; print(json.load(open('$MANIFEST')).get('database',''))")
 LICENSE_FILE=$(python3 -c "import json; print(json.load(open('$MANIFEST')).get('licenseFile',''))")
+DB_FILE="${DB_FILE//\\//}"
+LICENSE_FILE="${LICENSE_FILE//\\//}"
 PLATFORM_VERSION=$(python3 -c "import json; print(json.load(open('$MANIFEST'))['platform'])")
 MAJOR_VERSION=$(echo "$PLATFORM_VERSION" | cut -d. -f1)
 NAV_DIR="${MAJOR_VERSION}0"

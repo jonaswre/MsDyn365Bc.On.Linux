@@ -73,6 +73,15 @@ function Write-TestSummaryFromXUnit([string]$XUnitPath, [string]$TestLog) {
     return @{ Total = $total; Passed = $passed; Failed = $failed; Skipped = $skipped }
 }
 
+function Start-DockerServiceIfPresent {
+    $dockerService = Get-Service -Name docker -ErrorAction SilentlyContinue
+    if ($null -ne $dockerService -and $dockerService.Status -ne "Running") {
+        Start-Service -Name docker
+        $dockerService.WaitForStatus("Running", [TimeSpan]::FromSeconds(60))
+    }
+}
+
+Start-DockerServiceIfPresent
 Invoke-NativeChecked "WINDOWS_RUNNER_DOCKER_UNAVAILABLE" @("docker", "version")
 Invoke-NativeChecked "WINDOWS_RUNNER_WINDOWS_CONTAINERS_UNAVAILABLE" @("docker", "run", "--rm", "mcr.microsoft.com/windows/nanoserver:ltsc2022", "cmd", "/c", "ver")
 
