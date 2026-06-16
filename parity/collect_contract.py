@@ -52,7 +52,7 @@ def summarize_test_output(output: str, runner_kind: str) -> dict:
     import re
 
     codeunit_count = 0
-    match = re.search(r"Test codeunits:\s*([^\n]+)", output)
+    match = re.search(r"^Test codeunits:[ \t]*([^\n]*)", output, re.MULTILINE)
     if match:
         codeunit_count = len([part for part in match.group(1).replace("|", ",").split(",") if part.strip()])
 

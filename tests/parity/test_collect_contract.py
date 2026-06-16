@@ -311,6 +311,13 @@ class CollectContractTests(unittest.TestCase):
         self.assertEqual(0, summary["skipped"])
         self.assertEqual("websocket", summary["runnerKind"])
 
+    def test_summarize_test_output_keeps_empty_codeunit_line_at_zero(self):
+        output = "Test codeunits:\ntotal=0 passed=0 failed=0 skipped=0\n"
+        summary = summarize_test_output(output, "startup-debug")
+        self.assertEqual(0, summary["testCodeunitCount"])
+        self.assertEqual(0, summary["total"])
+        self.assertEqual("startup-debug", summary["runnerKind"])
+
 
 if __name__ == "__main__":
     unittest.main()
