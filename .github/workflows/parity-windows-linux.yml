@@ -83,6 +83,22 @@ jobs:
             --artifact-dir "artifact-cache/$BC_VERSION" \
             --app-json extensions/smoke-test/app.json \
             --out-dir extensions/smoke-test/.alpackages
+          TEST_RUNNER_APP=$(python3 - <<'PY'
+          import sys
+
+          sys.path.insert(0, "scripts")
+          from _bcapp import load_artifact_apps  # noqa
+
+          apps = load_artifact_apps(f"artifact-cache/{__import__('os').environ['BC_VERSION']}")
+          for info in apps.values():
+              if info.get("publisher") == "Microsoft" and info.get("name") == "Test Runner":
+                  print(info["path"])
+                  break
+          else:
+              print("Microsoft Test Runner app not found in artifacts", file=sys.stderr)
+              sys.exit(1)
+          PY
+          )
           python3 - <<'PY'
           import os
           import json
@@ -93,10 +109,16 @@ jobs:
           path.write_text(json.dumps(data, indent=2) + "\n")
           PY
           "$HOME/al" compile "/project:extensions/smoke-test" "/packagecachepath:extensions/smoke-test/.alpackages" "/out:smoke-test-$BC_VERSION.app"
+          AL_COMPILER="$HOME/al" scripts/build-patched-test-runner.sh \
+            --test-runner-app "$TEST_RUNNER_APP" \
+            --package-cache extensions/smoke-test/.alpackages \
+            --out "patched-test-runner-$BC_VERSION.app"
       - uses: actions/upload-artifact@v4
         with:
           name: smoke-app-${{ matrix.bc_version }}
-          path: smoke-test-${{ matrix.bc_version }}.app
+          path: |
+            smoke-test-${{ matrix.bc_version }}.app
+            patched-test-runner-${{ matrix.bc_version }}.app
 
   linux-contract:
     needs: [prepare, build-smoke-app]
@@ -132,7 +154,11 @@ jobs:
           scripts/wait-for-bc-healthy.sh 30
       - name: Collect Linux contract
         run: |
-          parity/collect-linux-contract.sh "build/smoke-test-$BC_VERSION.app" "$BC_VERSION" "contracts/linux-$BC_VERSION.json"
+          parity/collect-linux-contract.sh \
+            "build/smoke-test-$BC_VERSION.app" \
+            "$BC_VERSION" \
+            "contracts/linux-$BC_VERSION.json" \
+            "build/patched-test-runner-$BC_VERSION.app"
       - name: Capture Linux diagnostics
         if: failure()
         run: |
@@ -191,7 +217,7 @@ jobs:
 
   compare-contracts:
     needs: [prepare, linux-contract, windows-contract]
-    if: ${{ always() && needs.prepare.result == 'success' }}
+    if: ${{ needs.prepare.result == 'success' && needs.linux-contract.result == 'success' && needs.windows-contract.result == 'success' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

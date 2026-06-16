@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-app_path="${1:?usage: collect-linux-contract.sh <smoke-app> <bc-version> <out-json>}"
-bc_version="${2:?usage: collect-linux-contract.sh <smoke-app> <bc-version> <out-json>}"
-out_json="${3:?usage: collect-linux-contract.sh <smoke-app> <bc-version> <out-json>}"
+app_path="${1:?usage: collect-linux-contract.sh <smoke-app> <bc-version> <out-json> <patched-test-runner-app>}"
+bc_version="${2:?usage: collect-linux-contract.sh <smoke-app> <bc-version> <out-json> <patched-test-runner-app>}"
+out_json="${3:?usage: collect-linux-contract.sh <smoke-app> <bc-version> <out-json> <patched-test-runner-app>}"
+patched_test_runner_app="${4:?usage: collect-linux-contract.sh <smoke-app> <bc-version> <out-json> <patched-test-runner-app>}"
 auth="${BC_USERNAME:-admin}:${BC_PASSWORD:-admin}"
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
 test_log="$(mktemp)"
@@ -12,32 +13,14 @@ test_status=0
 
 mkdir -p "$(dirname "$out_json")"
 
-echo "Publishing Microsoft Test Runner dependency..."
-docker compose exec -T bc bash -s -- "$auth" <<'BCPUBLISH'
-set -euo pipefail
-auth="$1"
+if [ ! -f "$patched_test_runner_app" ]; then
+  echo "patched Microsoft Test Runner app not found: $patched_test_runner_app" >&2
+  exit 1
+fi
 
-. /bc/scripts/publish-app.sh
-
-test_runner_app=$(python3 - <<'PY'
-import sys
-
-sys.path.insert(0, "/bc/scripts")
-from _bcapp import load_artifact_apps  # noqa
-
-apps = load_artifact_apps("/bc/artifacts")
-for info in apps.values():
-    if info.get("publisher") == "Microsoft" and info.get("name") == "Test Runner":
-        print(info["path"])
-        break
-else:
-    print("Microsoft Test Runner app not found in /bc/artifacts", file=sys.stderr)
-    sys.exit(1)
-PY
-)
-
-bc_publish_app "$test_runner_app" "http://localhost:7049/BC/dev" "$auth"
-BCPUBLISH
+. "$repo_dir/scripts/publish-app.sh"
+echo "Publishing version-matched patched Microsoft Test Runner..."
+bc_publish_app "$patched_test_runner_app" "http://localhost:7049/BC/dev" "$auth"
 
 "$repo_dir/scripts/run-tests.sh" \
   --app "$app_path" \
