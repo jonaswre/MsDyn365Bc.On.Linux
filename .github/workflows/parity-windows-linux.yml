@@ -111,6 +111,8 @@ jobs:
       BC_TYPE: onprem
       BC_USERNAME: admin
       BC_PASSWORD: admin
+      BC_CLEAR_ALL_APPS: deps-only
+      BC_INCLUDE_TEST_TOOLKIT: 'true'
       MSSQL_MEMORY_LIMIT_MB: 1024
       DOTNET_GCConserveMemory: 9
       DOTNET_GCHeapCount: 2
@@ -124,8 +126,13 @@ jobs:
       - name: Start Linux BC
         run: |
           free -h
+          echo "BC_CLEAR_ALL_APPS=$BC_CLEAR_ALL_APPS"
+          echo "BC_INCLUDE_TEST_TOOLKIT=$BC_INCLUDE_TEST_TOOLKIT"
           docker compose up -d
           scripts/wait-for-bc-healthy.sh 30
+      - name: Collect Linux contract
+        run: |
+          parity/collect-linux-contract.sh "build/smoke-test-$BC_VERSION.app" "$BC_VERSION" "contracts/linux-$BC_VERSION.json"
       - name: Capture Linux diagnostics
         if: failure()
         run: |
@@ -135,9 +142,6 @@ jobs:
           docker compose ps > diagnostics/linux/compose-ps.txt 2>&1 || true
           docker stats --no-stream > diagnostics/linux/docker-stats.txt 2>&1 || true
           docker compose logs --no-color > diagnostics/linux/compose.log 2>&1 || true
-      - name: Collect Linux contract
-        run: |
-          parity/collect-linux-contract.sh "build/smoke-test-$BC_VERSION.app" "$BC_VERSION" "contracts/linux-$BC_VERSION.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
