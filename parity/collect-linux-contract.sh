@@ -12,6 +12,19 @@ test_status=0
 
 mkdir -p "$(dirname "$out_json")"
 
+echo "Publishing patched Microsoft Test Runner dependency..."
+docker compose exec -T bc bash -s -- "$auth" <<'BCPUBLISH'
+set -euo pipefail
+auth="$1"
+
+. /bc/scripts/publish-app.sh
+
+bc_publish_app \
+  "/bc/testrunner/MicrosoftTestRunnerPatched.app" \
+  "http://localhost:7049/BC/dev" \
+  "$auth"
+BCPUBLISH
+
 "$repo_dir/scripts/run-tests.sh" \
   --app "$app_path" \
   --auth "$auth" \

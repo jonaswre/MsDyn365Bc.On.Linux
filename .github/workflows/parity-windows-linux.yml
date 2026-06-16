@@ -112,7 +112,7 @@ jobs:
       BC_USERNAME: admin
       BC_PASSWORD: admin
       BC_CLEAR_ALL_APPS: deps-only
-      BC_INCLUDE_TEST_TOOLKIT: 'true'
+      BC_INCLUDE_TEST_TOOLKIT: 'false'
       MSSQL_MEMORY_LIMIT_MB: 1024
       DOTNET_GCConserveMemory: 9
       DOTNET_GCHeapCount: 2

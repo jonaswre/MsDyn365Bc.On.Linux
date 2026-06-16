@@ -19,7 +19,13 @@ class ParityWorkflowTests(unittest.TestCase):
         env = self.linux_contract_job()["env"]
 
         self.assertEqual("deps-only", env["BC_CLEAR_ALL_APPS"])
-        self.assertEqual("true", env["BC_INCLUDE_TEST_TOOLKIT"])
+        self.assertEqual("false", env["BC_INCLUDE_TEST_TOOLKIT"])
+
+    def test_linux_contract_publishes_only_smoke_test_runner_dependency(self):
+        script = Path("parity/collect-linux-contract.sh").read_text(encoding="utf-8")
+
+        self.assertIn("MicrosoftTestRunnerPatched.app", script)
+        self.assertNotIn("Business Foundation Test Libraries", script)
 
     def test_linux_diagnostics_are_captured_after_contract_collection(self):
         names = self.step_names()
