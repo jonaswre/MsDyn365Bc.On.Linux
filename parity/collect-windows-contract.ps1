@@ -169,7 +169,7 @@ try {
         -containerName $ContainerName `
         -credential $credential `
         -extensionId "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" `
-        -testCodeunit "70000|70001" `
+        -testCodeunitRange "70000|70001" `
         -detailed `
         -XUnitResultFileName $xunitPath `
         -ReturnTrueIfAllPassed

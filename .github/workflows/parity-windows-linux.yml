@@ -101,6 +101,7 @@ jobs:
   linux-contract:
     needs: [prepare, build-smoke-app]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
@@ -120,6 +121,13 @@ jobs:
         run: |
           docker compose up -d
           scripts/wait-for-bc-healthy.sh 30
+      - name: Capture Linux diagnostics
+        if: failure()
+        run: |
+          mkdir -p diagnostics/linux
+          docker version > diagnostics/linux/docker-version.txt 2>&1 || true
+          docker compose ps > diagnostics/linux/compose-ps.txt 2>&1 || true
+          docker compose logs --no-color > diagnostics/linux/compose.log 2>&1 || true
       - name: Collect Linux contract
         run: |
           parity/collect-linux-contract.sh "build/smoke-test-$BC_VERSION.app" "$BC_VERSION" "contracts/linux-$BC_VERSION.json"
@@ -128,10 +136,18 @@ jobs:
         with:
           name: contract-linux-${{ matrix.bc_version }}
           path: contracts/linux-${{ matrix.bc_version }}.json
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnostics-linux-${{ matrix.bc_version }}
+          path: diagnostics/linux/**
+          if-no-files-found: ignore
 
   windows-contract:
     needs: [prepare, build-smoke-app]
     runs-on: windows-2022
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
