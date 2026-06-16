@@ -112,6 +112,9 @@ jobs:
       BC_USERNAME: admin
       BC_PASSWORD: admin
       MSSQL_MEMORY_LIMIT_MB: 1024
+      DOTNET_GCConserveMemory: 9
+      DOTNET_GCHeapCount: 2
+      DOTNET_GCNoAffinitize: 1
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
