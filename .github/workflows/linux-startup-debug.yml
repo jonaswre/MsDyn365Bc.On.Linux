@@ -21,6 +21,22 @@ on:
         required: false
         default: ''
         type: string
+      clear_all_apps:
+        description: 'BC_CLEAR_ALL_APPS mode for startup isolation'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'none'
+          - 'selective'
+          - 'deps-only'
+          - 'true'
+      keep_app_ids:
+        description: 'Comma-separated app ids to keep when clear_all_apps=selective'
+        required: false
+        default: ''
+        type: string
       startup_timeout_minutes:
         description: 'Minutes to wait for Linux BC health'
         required: false
@@ -41,6 +57,8 @@ jobs:
       BC_USERNAME: admin
       BC_PASSWORD: admin
       BC_INCLUDE_TEST_TOOLKIT: ${{ inputs.include_test_toolkit }}
+      BC_CLEAR_ALL_APPS: ${{ inputs.clear_all_apps }}
+      BC_KEEP_APP_IDS: ${{ inputs.keep_app_ids }}
       MSSQL_MEMORY_LIMIT_MB: 1024
       DOTNET_GCConserveMemory: 9
       DOTNET_GCHeapCount: 2
@@ -54,6 +72,8 @@ jobs:
           {
             echo "BC_VERSION=$BC_VERSION"
             echo "BC_INCLUDE_TEST_TOOLKIT=$BC_INCLUDE_TEST_TOOLKIT"
+            echo "BC_CLEAR_ALL_APPS=$BC_CLEAR_ALL_APPS"
+            echo "BC_KEEP_APP_IDS=$BC_KEEP_APP_IDS"
             echo "MSSQL_MEMORY_LIMIT_MB=$MSSQL_MEMORY_LIMIT_MB"
             echo "DOTNET_GCConserveMemory=$DOTNET_GCConserveMemory"
             echo "DOTNET_GCHeapCount=$DOTNET_GCHeapCount"
@@ -83,6 +103,8 @@ jobs:
             --test-output "$test_log" \
             --runner-kind startup-debug \
             --diagnostic "includeTestToolkit=$BC_INCLUDE_TEST_TOOLKIT" \
+            --diagnostic "clearAllApps=$BC_CLEAR_ALL_APPS" \
+            --diagnostic "keepAppIds=$BC_KEEP_APP_IDS" \
             --diagnostic "toolkitApps=${{ inputs.toolkit_apps }}" \
             --out "contracts/linux-startup-$BC_VERSION.json"
 
