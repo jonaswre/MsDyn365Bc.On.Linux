@@ -29,6 +29,13 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertNotIn("load_artifact_apps", script)
         self.assertNotIn("Business Foundation Test Libraries", script)
 
+    def test_linux_contract_records_test_runner_setup_failure_as_contract_data(self):
+        script = Path("parity/collect-linux-contract.sh").read_text(encoding="utf-8")
+
+        self.assertIn("tests.runnerSetup=patched Microsoft Test Runner publish failed", script)
+        self.assertIn("total=0 passed=0 failed=1 skipped=0", script)
+        self.assertIn("exit 0", script)
+
     def test_linux_diagnostics_are_captured_after_contract_collection(self):
         names = self.step_names()
 
