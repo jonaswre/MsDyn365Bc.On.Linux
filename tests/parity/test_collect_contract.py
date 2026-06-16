@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import parity.collect_contract as collect_contract
 from parity.collect_contract import (
+    RUNNER_KINDS,
     automation_base_url,
     http_class,
     is_super_permission,
@@ -15,6 +16,9 @@ from parity.collect_contract import (
 
 
 class CollectContractTests(unittest.TestCase):
+    def test_startup_debug_is_a_supported_runner_kind(self):
+        self.assertIn("startup-debug", RUNNER_KINDS)
+
     def test_http_class_normalizes_status_codes(self):
         self.assertEqual("2xx", http_class(200))
         self.assertEqual("3xx", http_class(302))

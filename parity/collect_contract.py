@@ -12,6 +12,7 @@ from urllib import error, parse, request
 
 
 LAST_FETCH_ERRORS: dict[str, str] = {}
+RUNNER_KINDS = ("websocket", "bccontainerhelper", "startup-debug")
 
 
 def http_class(status: int) -> str:
@@ -546,7 +547,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--auth", required=True)
     parser.add_argument("--invalid-auth", required=True)
     parser.add_argument("--test-output", required=True, type=Path)
-    parser.add_argument("--runner-kind", required=True, choices=("websocket", "bccontainerhelper"))
+    parser.add_argument("--runner-kind", required=True, choices=RUNNER_KINDS)
     parser.add_argument("--diagnostic", action="append", default=[])
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args(argv)
