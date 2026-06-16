@@ -24,7 +24,9 @@ class ParityWorkflowTests(unittest.TestCase):
     def test_linux_contract_publishes_only_smoke_test_runner_dependency(self):
         script = Path("parity/collect-linux-contract.sh").read_text(encoding="utf-8")
 
-        self.assertIn("MicrosoftTestRunnerPatched.app", script)
+        self.assertIn("load_artifact_apps", script)
+        self.assertIn('"Test Runner"', script)
+        self.assertNotIn("MicrosoftTestRunnerPatched.app", script)
         self.assertNotIn("Business Foundation Test Libraries", script)
 
     def test_linux_diagnostics_are_captured_after_contract_collection(self):

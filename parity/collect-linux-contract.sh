@@ -12,17 +12,31 @@ test_status=0
 
 mkdir -p "$(dirname "$out_json")"
 
-echo "Publishing patched Microsoft Test Runner dependency..."
+echo "Publishing Microsoft Test Runner dependency..."
 docker compose exec -T bc bash -s -- "$auth" <<'BCPUBLISH'
 set -euo pipefail
 auth="$1"
 
 . /bc/scripts/publish-app.sh
 
-bc_publish_app \
-  "/bc/testrunner/MicrosoftTestRunnerPatched.app" \
-  "http://localhost:7049/BC/dev" \
-  "$auth"
+test_runner_app=$(python3 - <<'PY'
+import sys
+
+sys.path.insert(0, "/bc/scripts")
+from _bcapp import load_artifact_apps  # noqa
+
+apps = load_artifact_apps("/bc/artifacts")
+for info in apps.values():
+    if info.get("publisher") == "Microsoft" and info.get("name") == "Test Runner":
+        print(info["path"])
+        break
+else:
+    print("Microsoft Test Runner app not found in /bc/artifacts", file=sys.stderr)
+    sys.exit(1)
+PY
+)
+
+bc_publish_app "$test_runner_app" "http://localhost:7049/BC/dev" "$auth"
 BCPUBLISH
 
 "$repo_dir/scripts/run-tests.sh" \
