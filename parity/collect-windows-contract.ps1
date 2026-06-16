@@ -129,7 +129,7 @@ try {
         "--publish", "7047:7047",
         "--publish", "7048:7048",
         "--publish", "7049:7049",
-        "--publish", "7052:7052",
+        "--publish", "7052:7048",
         "--publish", "7085:80",
         "--publish", "7086:7086"
     )
@@ -154,7 +154,10 @@ if (-not $runnerTemp) {
 }
 
 $testLog = Join-Path $runnerTemp "bc-parity-tests-$BcVersion.log"
-$xunitPath = Join-Path $contractsDir "bc-parity-$BcVersion.xml"
+$bcContainerHelperData = Join-Path $env:ProgramData "BcContainerHelper"
+New-Item -ItemType Directory -Force -Path $bcContainerHelperData | Out-Null
+$xunitPath = Join-Path $bcContainerHelperData "bc-parity-$BcVersion.xml"
+$workspaceXunitPath = Join-Path $contractsDir "bc-parity-$BcVersion.xml"
 $testStatus = 0
 try {
     Publish-BcContainerApp -containerName $ContainerName -appFile $SmokeAppPath -sync -install -skipVerification
@@ -191,6 +194,9 @@ try {
             "XUnit result reported $($summary.Failed) failed tests" | Add-Content -Path $testLog
         }
     }
+    if (Test-Path -Path $xunitPath) {
+        Copy-Item -Path $xunitPath -Destination $workspaceXunitPath -Force
+    }
 } catch {
     $testStatus = 1
     $runnerError = $_.Exception.Message
@@ -203,6 +209,9 @@ try {
         }
     } else {
         Write-FailedTestSummary -TestLog $testLog -Message $runnerError
+    }
+    if (Test-Path -Path $xunitPath) {
+        Copy-Item -Path $xunitPath -Destination $workspaceXunitPath -Force
     }
 }
 
