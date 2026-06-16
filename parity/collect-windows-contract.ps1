@@ -123,6 +123,16 @@ $credential = [pscredential]::new($Username, $securePassword)
 
 try {
     $artifactUrl = Get-BCArtifactUrl -Type OnPrem -Country w1 -Version $BcVersion
+    $additionalParameters = @(
+        "--publish", "7045:7045",
+        "--publish", "7046:7046",
+        "--publish", "7047:7047",
+        "--publish", "7048:7048",
+        "--publish", "7049:7049",
+        "--publish", "7052:7052",
+        "--publish", "7085:80",
+        "--publish", "7086:7086"
+    )
     New-BcContainer `
         -accept_eula `
         -containerName $ContainerName `
@@ -132,7 +142,8 @@ try {
         -isolation process `
         -updateHosts `
         -includeTestToolkit `
-        -shortcuts None
+        -shortcuts None `
+        -additionalParameters $additionalParameters
 } catch {
     Fail-Capability "WINDOWS_BC_CONTAINER_START_FAILED" $_.Exception.Message
 }
@@ -143,9 +154,7 @@ if (-not $runnerTemp) {
 }
 
 $testLog = Join-Path $runnerTemp "bc-parity-tests-$BcVersion.log"
-$bcContainerHelperData = Join-Path $env:ProgramData "BcContainerHelper"
-New-Item -ItemType Directory -Force -Path $bcContainerHelperData | Out-Null
-$xunitPath = Join-Path $bcContainerHelperData "bc-parity-$BcVersion.xml"
+$xunitPath = Join-Path $contractsDir "bc-parity-$BcVersion.xml"
 $testStatus = 0
 try {
     Publish-BcContainerApp -containerName $ContainerName -appFile $SmokeAppPath -sync -install -skipVerification

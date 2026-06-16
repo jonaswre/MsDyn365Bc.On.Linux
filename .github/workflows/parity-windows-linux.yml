@@ -157,7 +157,6 @@ jobs:
         with:
           name: diagnostics-windows-${{ matrix.bc_version }}
           path: |
-            C:\ProgramData\BcContainerHelper\**
             contracts\**
             ${{ runner.temp }}\*.log
             ${{ runner.temp }}\*.xml
