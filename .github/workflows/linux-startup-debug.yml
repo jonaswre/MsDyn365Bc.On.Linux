@@ -1,0 +1,113 @@
+name: Linux BC startup debug
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'BC version to start'
+        required: false
+        default: '27.5'
+        type: string
+      include_test_toolkit:
+        description: 'Publish the default test toolkit during startup'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      toolkit_apps:
+        description: 'Comma-separated toolkit app names to publish after healthy startup, or core'
+        required: false
+        default: ''
+        type: string
+      startup_timeout_minutes:
+        description: 'Minutes to wait for Linux BC health'
+        required: false
+        default: '30'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  linux-startup-debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      BC_VERSION: ${{ inputs.version }}
+      BC_COUNTRY: w1
+      BC_TYPE: onprem
+      BC_USERNAME: admin
+      BC_PASSWORD: admin
+      BC_INCLUDE_TEST_TOOLKIT: ${{ inputs.include_test_toolkit }}
+      MSSQL_MEMORY_LIMIT_MB: 1024
+      DOTNET_GCConserveMemory: 9
+      DOTNET_GCHeapCount: 2
+      DOTNET_GCNoAffinitize: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start Linux BC
+        run: |
+          mkdir -p diagnostics/linux contracts
+          {
+            echo "BC_VERSION=$BC_VERSION"
+            echo "BC_INCLUDE_TEST_TOOLKIT=$BC_INCLUDE_TEST_TOOLKIT"
+            echo "MSSQL_MEMORY_LIMIT_MB=$MSSQL_MEMORY_LIMIT_MB"
+            echo "DOTNET_GCConserveMemory=$DOTNET_GCConserveMemory"
+            echo "DOTNET_GCHeapCount=$DOTNET_GCHeapCount"
+            echo "DOTNET_GCNoAffinitize=$DOTNET_GCNoAffinitize"
+            free -h
+          } | tee diagnostics/linux/startup-env.txt
+          docker compose up -d
+          scripts/wait-for-bc-healthy.sh "${{ inputs.startup_timeout_minutes }}"
+
+      - name: Collect startup contract
+        if: success()
+        run: |
+          test_log="contracts/linux-startup-$BC_VERSION-tests.log"
+          {
+            echo "Test codeunits:"
+            echo "total=0 passed=0 failed=0 skipped=0"
+          } > "$test_log"
+          python3 parity/collect_contract.py \
+            --platform linux \
+            --bc-version "$BC_VERSION" \
+            --base-url "http://localhost:7046/BC" \
+            --dev-url "http://localhost:7049/BC/dev" \
+            --odata-url "http://localhost:7048/BC/ODataV4" \
+            --api-url "http://localhost:7052/BC/api/v2.0" \
+            --auth "$BC_USERNAME:$BC_PASSWORD" \
+            --invalid-auth "not-admin:not-admin" \
+            --test-output "$test_log" \
+            --runner-kind startup-debug \
+            --diagnostic "includeTestToolkit=$BC_INCLUDE_TEST_TOOLKIT" \
+            --diagnostic "toolkitApps=${{ inputs.toolkit_apps }}" \
+            --out "contracts/linux-startup-$BC_VERSION.json"
+
+      - name: Publish selected toolkit apps
+        if: ${{ success() && inputs.toolkit_apps != '' }}
+        run: |
+          set -o pipefail
+          scripts/debug-publish-toolkit-apps.sh "${{ inputs.toolkit_apps }}" \
+            | tee "diagnostics/linux/toolkit-publish-$BC_VERSION.log"
+
+      - name: Capture Linux diagnostics
+        if: always()
+        run: |
+          mkdir -p diagnostics/linux
+          free -h > diagnostics/linux/free.txt 2>&1 || true
+          docker version > diagnostics/linux/docker-version.txt 2>&1 || true
+          docker compose ps > diagnostics/linux/compose-ps.txt 2>&1 || true
+          docker stats --no-stream > diagnostics/linux/docker-stats.txt 2>&1 || true
+          docker compose logs --no-color > diagnostics/linux/compose.log 2>&1 || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-startup-debug-${{ inputs.version }}
+          path: |
+            contracts/**
+            diagnostics/linux/**
+          if-no-files-found: ignore
