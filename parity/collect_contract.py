@@ -399,6 +399,45 @@ def payload_signature(body: str) -> dict[str, str]:
     return {"payloadClass": "text", "xmlRoot": ""}
 
 
+def html_signature(body: str) -> dict[str, bool]:
+    text = body.lower()
+    return {
+        "hasHtmlRoot": "<html" in text,
+        "hasForm": "<form" in text,
+        "hasRequestVerificationToken": "__requestverificationtoken" in text,
+        "hasUserNameInput": "username" in text,
+        "hasPasswordInput": "password" in text and "type=\"password\"" in text,
+        "hasSignInText": "sign in" in text or "signin" in text,
+    }
+
+
+def web_payload_class(headers: dict[str, str], body: str) -> str:
+    if content_type_class(headers) == "html":
+        return "html"
+    text = body.lstrip().lower()
+    if text.startswith("<!doctype html") or text.startswith("<html"):
+        return "html"
+    return payload_signature(body)["payloadClass"]
+
+
+def web_client_content_probe(url: str, diagnostics: dict[str, str]) -> dict[str, Any]:
+    status, headers, body = fetch_text(url)
+    record_zero_status(diagnostics, "webClient.root", url, status)
+    return {
+        "httpClass": http_class(status),
+        "contentTypeClass": content_type_class(headers),
+        "payloadClass": web_payload_class(headers, body),
+        **html_signature(body),
+        "setCookiePresent": any(key.lower() == "set-cookie" for key in headers),
+    }
+
+
+def collect_web_client(args: argparse.Namespace, diagnostics: dict[str, str]) -> dict[str, Any]:
+    return {
+        "root": web_client_content_probe(optional_url(args.web_client_url, join_url(args.base_url, "client/SignIn")), diagnostics),
+    }
+
+
 def surface_probe(url: str, valid_auth: str, invalid_auth: str, diagnostics: dict[str, str], name: str) -> dict[str, Any]:
     valid_status, _ = fetch_status(url, valid_auth)
     invalid_status, _ = fetch_status(url, invalid_auth)
@@ -762,6 +801,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "surface": collect_surface(args, diagnostics),
         "auth": auth,
         "company": collect_company(args, diagnostics),
+        "webClient": collect_web_client(args, diagnostics),
         "integration": collect_integration(args, diagnostics, company_id),
         "dev": collect_dev(args, diagnostics),
         "tests": collect_tests(args.test_output, args.runner_kind, diagnostics),
