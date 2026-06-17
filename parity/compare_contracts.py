@@ -10,6 +10,7 @@ from typing import Any
 
 
 IGNORED_TOP_LEVEL_KEYS = {"platform", "diagnostics"}
+IGNORED_PATHS = {"tests.runnerKind"}
 MISSING_VALUE = object()
 
 
@@ -56,6 +57,8 @@ def diff_entry(path: str, left: Any, right: Any) -> dict[str, Any]:
 
 
 def flatten_diff(path: str, left: Any, right: Any) -> list[dict[str, Any]]:
+    if path in IGNORED_PATHS:
+        return []
     left = normalize_for_compare(left)
     right = normalize_for_compare(right)
     if left == right:

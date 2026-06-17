@@ -141,7 +141,7 @@ try {
         -auth UserPassword `
         -isolation process `
         -updateHosts `
-        -includeTestToolkit `
+        -includeTestRunnerOnly `
         -shortcuts None `
         -additionalParameters $additionalParameters
 } catch {

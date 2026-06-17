@@ -12,6 +12,11 @@ class ParityWorkflowTests(unittest.TestCase):
     def linux_contract_job(self):
         return self.workflow()["jobs"]["linux-contract"]
 
+    def windows_contract_script(self):
+        steps = self.workflow()["jobs"]["windows-contract"]["steps"]
+        collect = next(step for step in steps if step.get("name") == "Collect Windows contract")
+        return collect["run"]
+
     def step_names(self):
         return [step.get("name") or step.get("uses") for step in self.linux_contract_job()["steps"]]
 
@@ -20,6 +25,12 @@ class ParityWorkflowTests(unittest.TestCase):
 
         self.assertEqual("false", env["BC_CLEAR_ALL_APPS"])
         self.assertEqual("false", env["BC_INCLUDE_TEST_TOOLKIT"])
+
+    def test_windows_contract_uses_test_runner_only(self):
+        script = Path("parity/collect-windows-contract.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("-includeTestRunnerOnly", script)
+        self.assertNotIn("-includeTestToolkit", script)
 
     def test_linux_contract_uses_hosted_runner_memory_budget(self):
         env = self.linux_contract_job()["env"]

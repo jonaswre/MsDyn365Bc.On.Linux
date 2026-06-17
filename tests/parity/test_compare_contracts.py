@@ -72,6 +72,16 @@ class CompareContractsTests(unittest.TestCase):
 
         self.assertEqual([], result.unexpected)
 
+    def test_runner_kind_is_ignored_as_harness_detail(self):
+        linux = base_contract("linux")
+        windows = base_contract("windows")
+        linux["tests"]["runnerKind"] = "websocket"
+        windows["tests"]["runnerKind"] = "bccontainerhelper"
+
+        result = compare_contracts(linux, windows, [])
+
+        self.assertEqual([], result.unexpected)
+
     def test_unexpected_value_difference_is_reported(self):
         linux = base_contract("linux")
         windows = base_contract("windows")
