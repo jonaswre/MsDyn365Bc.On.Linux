@@ -25,6 +25,20 @@ class HttpSysStubCompatibilityTests(unittest.TestCase):
             self.assertIn(path, public_paths)
             self.assertIn(path, sign_in_shim)
 
+    def test_web_client_csrf_matches_windows_error_shape(self):
+        public_paths = self.method_body("IsPublicWebClientCompatibilityPath")
+        sign_in_shim = self.method_body("WebClientSignInCompatibility")
+        csrf_error = self.method_body("WriteWindowsCompatibleCsrfError")
+
+        for path in ('"/csrf"', '"/BC/csrf"', '"/BC/client/csrf"'):
+            self.assertNotIn(path, public_paths)
+            self.assertIn(path, sign_in_shim)
+
+        self.assertIn("Status400BadRequest", csrf_error)
+        self.assertIn('"text/html; charset=utf-8"', csrf_error)
+        self.assertIn("<error", csrf_error)
+        self.assertNotIn("SetShimCookie", csrf_error)
+
     def test_windows_public_compatibility_paths_are_explicit_and_do_not_include_api_or_odata(self):
         body = self.method_body("IsWindowsPublicCompatibilityPath")
 

@@ -222,9 +222,6 @@ namespace Microsoft.AspNetCore.Hosting
                 || string.Equals(path, "/SignIn", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(path, "/BC/SignIn", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(path, "/BC/client/SignIn", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(path, "/csrf", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(path, "/BC/csrf", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(path, "/BC/client/csrf", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(path, "/BC/client", StringComparison.OrdinalIgnoreCase);
         }
 
@@ -295,10 +292,7 @@ namespace Microsoft.AspNetCore.Hosting
                 || string.Equals(path, "/BC/csrf", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(path, "/BC/client/csrf", StringComparison.OrdinalIgnoreCase))
             {
-                SetShimCookie(context);
-                context.Response.StatusCode = 200;
-                context.Response.ContentType = "application/json; charset=utf-8";
-                await context.Response.WriteAsync("{\"csrfToken\":\"shim-csrf\"}");
+                await WriteWindowsCompatibleCsrfError(context);
                 return;
             }
 
@@ -322,6 +316,14 @@ namespace Microsoft.AspNetCore.Hosting
             }
 
             await nextMiddleware();
+        }
+
+        private static async System.Threading.Tasks.Task WriteWindowsCompatibleCsrfError(
+            Microsoft.AspNetCore.Http.HttpContext context)
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            context.Response.ContentType = "text/html; charset=utf-8";
+            await context.Response.WriteAsync("<error code=\"BadRequest\"/>");
         }
 
         private static bool IsClientServicesPath(string path)
