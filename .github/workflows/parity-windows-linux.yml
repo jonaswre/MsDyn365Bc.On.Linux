@@ -179,7 +179,7 @@ jobs:
   linux-contract:
     needs: [prepare, build-smoke-app]
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
@@ -191,10 +191,8 @@ jobs:
       BC_PASSWORD: admin
       BC_CLEAR_ALL_APPS: selective
       BC_INCLUDE_TEST_TOOLKIT: 'false'
+      BC_MEMORY_LIMIT: 12G
       MSSQL_MEMORY_LIMIT_MB: 1024
-      DOTNET_GCConserveMemory: 9
-      DOTNET_GCHeapCount: 2
-      DOTNET_GCNoAffinitize: 1
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -216,8 +214,10 @@ jobs:
           echo "BC_CLEAR_ALL_APPS=$BC_CLEAR_ALL_APPS"
           echo "BC_KEEP_APP_IDS=$BC_KEEP_APP_IDS"
           echo "BC_INCLUDE_TEST_TOOLKIT=$BC_INCLUDE_TEST_TOOLKIT"
+          echo "BC_MEMORY_LIMIT=$BC_MEMORY_LIMIT"
+          echo "MSSQL_MEMORY_LIMIT_MB=$MSSQL_MEMORY_LIMIT_MB"
           docker compose up -d
-          scripts/wait-for-bc-healthy.sh 30
+          scripts/wait-for-bc-healthy.sh 45
       - name: Collect Linux contract
         run: |
           parity/collect-linux-contract.sh \
@@ -234,6 +234,7 @@ jobs:
           docker version > diagnostics/linux/docker-version.txt 2>&1 || true
           docker compose ps > diagnostics/linux/compose-ps.txt 2>&1 || true
           docker stats --no-stream > diagnostics/linux/docker-stats.txt 2>&1 || true
+          docker inspect "$(docker compose ps -q bc)" > diagnostics/linux/bc-inspect.json 2>&1 || true
           docker compose logs --no-color > diagnostics/linux/compose.log 2>&1 || true
       - uses: actions/upload-artifact@v4
         if: always()

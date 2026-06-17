@@ -33,8 +33,20 @@ MAX_ITER=$(( TIMEOUT_MIN * 12 ))   # 5 sec poll interval
 START_TIME=$(date +%s)
 LAST_PROGRESS=0
 STATUS="unknown"
+CID=""
 
 echo "Waiting for BC to be healthy (max ${TIMEOUT_MIN} min)..."
+
+print_failure_context() {
+    local cid="$1"
+
+    if [ -n "$cid" ]; then
+        echo "Docker healthcheck log:"
+        docker inspect --format='{{range .State.Health.Log}}{{println .End "exit=" .ExitCode}}{{print .Output}}{{println}}{{end}}' "$cid" 2>/dev/null | tail -80
+    fi
+
+    docker compose logs bc 2>&1 | tail -100
+}
 
 for i in $(seq 1 "$MAX_ITER"); do
     CID=$(docker compose ps -q bc 2>/dev/null | head -1)
@@ -53,7 +65,7 @@ for i in $(seq 1 "$MAX_ITER"); do
             ;;
         unhealthy)
             echo "ERROR: BC container reached 'unhealthy'"
-            docker compose logs bc 2>&1 | tail -100
+            print_failure_context "$CID"
             exit 1
             ;;
     esac
@@ -62,7 +74,7 @@ for i in $(seq 1 "$MAX_ITER"); do
     # bail rather than spinning forever.
     if ! docker compose ps bc 2>/dev/null | grep -q "Up"; then
         echo "ERROR: BC container is no longer running"
-        docker compose logs bc 2>&1 | tail -100
+        print_failure_context "$CID"
         exit 1
     fi
 
@@ -80,5 +92,5 @@ for i in $(seq 1 "$MAX_ITER"); do
 done
 
 echo "ERROR: BC did not become healthy within ${TIMEOUT_MIN} minutes (final status: ${STATUS})"
-docker compose logs bc 2>&1 | tail -100
+print_failure_context "$CID"
 exit 1

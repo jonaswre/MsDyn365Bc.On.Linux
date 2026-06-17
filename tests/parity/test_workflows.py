@@ -21,6 +21,15 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertEqual("selective", env["BC_CLEAR_ALL_APPS"])
         self.assertEqual("false", env["BC_INCLUDE_TEST_TOOLKIT"])
 
+    def test_linux_contract_uses_hosted_runner_memory_budget(self):
+        env = self.linux_contract_job()["env"]
+
+        self.assertEqual("12G", env["BC_MEMORY_LIMIT"])
+        self.assertEqual(1024, env["MSSQL_MEMORY_LIMIT_MB"])
+        self.assertNotIn("DOTNET_GCConserveMemory", env)
+        self.assertNotIn("DOTNET_GCHeapCount", env)
+        self.assertNotIn("DOTNET_GCNoAffinitize", env)
+
     def test_build_job_uploads_keep_app_ids_for_linux_startup(self):
         steps = self.workflow()["jobs"]["build-smoke-app"]["steps"]
         script = "\n".join(step.get("run", "") for step in steps)
@@ -80,6 +89,13 @@ class ParityWorkflowTests(unittest.TestCase):
         names = self.step_names()
 
         self.assertLess(names.index("Collect Linux contract"), names.index("Capture Linux diagnostics"))
+
+    def test_linux_diagnostics_capture_healthcheck_state(self):
+        steps = self.linux_contract_job()["steps"]
+        diagnostics = next(step for step in steps if step.get("name") == "Capture Linux diagnostics")
+
+        self.assertIn("docker inspect \"$(docker compose ps -q bc)\"", diagnostics["run"])
+        self.assertIn("bc-inspect.json", diagnostics["run"])
 
     def test_build_job_uploads_version_matched_patched_test_runner(self):
         steps = self.workflow()["jobs"]["build-smoke-app"]["steps"]
