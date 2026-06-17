@@ -432,9 +432,31 @@ def web_client_content_probe(url: str, diagnostics: dict[str, str]) -> dict[str,
     }
 
 
-def collect_web_client(args: argparse.Namespace, diagnostics: dict[str, str]) -> dict[str, Any]:
+def json_body_has_key(body: str, key: str) -> bool:
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(payload, dict) and key in payload and bool(str(payload.get(key, "")).strip())
+
+
+def web_client_csrf_probe(url: str, diagnostics: dict[str, str]) -> dict[str, Any]:
+    status, headers, body = fetch_text(url)
+    record_zero_status(diagnostics, "webClient.csrf", url, status)
     return {
-        "root": web_client_content_probe(optional_url(args.web_client_url, join_url(args.base_url, "client/SignIn")), diagnostics),
+        "httpClass": http_class(status),
+        "contentTypeClass": content_type_class(headers),
+        "payloadClass": payload_signature(body)["payloadClass"],
+        "hasCsrfToken": json_body_has_key(body, "csrfToken"),
+        "setCookiePresent": any(key.lower() == "set-cookie" for key in headers),
+    }
+
+
+def collect_web_client(args: argparse.Namespace, diagnostics: dict[str, str]) -> dict[str, Any]:
+    web_client_base_url = optional_url(args.web_client_url, join_url(args.base_url, "client/SignIn"))
+    return {
+        "root": web_client_content_probe(web_client_base_url, diagnostics),
+        "csrf": web_client_csrf_probe(join_url(web_client_base_url, "client/csrf"), diagnostics),
     }
 
 

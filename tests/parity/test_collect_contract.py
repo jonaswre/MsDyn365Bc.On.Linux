@@ -250,6 +250,8 @@ class CollectContractTests(unittest.TestCase):
 
         def fake_fetch_text(url, auth=None, headers=None, timeout=15):
             del auth, headers, timeout
+            if url == "http://localhost:7085/BC/client/csrf":
+                return 200, {"Content-Type": "application/json"}, '{"csrfToken":"token"}'
             self.assertEqual("http://localhost:7085/BC/", url)
             return (
                 200,
@@ -268,20 +270,49 @@ class CollectContractTests(unittest.TestCase):
 
         self.assertEqual(
             {
-                "root": {
-                    "httpClass": "2xx",
-                    "contentTypeClass": "html",
-                    "payloadClass": "html",
-                    "hasHtmlRoot": True,
-                    "hasForm": True,
-                    "hasRequestVerificationToken": True,
-                    "hasUserNameInput": True,
-                    "hasPasswordInput": True,
-                    "hasSignInText": True,
-                    "setCookiePresent": True,
-                }
+                "httpClass": "2xx",
+                "contentTypeClass": "html",
+                "payloadClass": "html",
+                "hasHtmlRoot": True,
+                "hasForm": True,
+                "hasRequestVerificationToken": True,
+                "hasUserNameInput": True,
+                "hasPasswordInput": True,
+                "hasSignInText": True,
+                "setCookiePresent": True,
             },
-            result,
+            result["root"],
+        )
+
+    def test_collect_web_client_records_csrf_bootstrap_signature(self):
+        args = SimpleNamespace(
+            base_url="http://localhost:7046/BC",
+            web_client_url="http://localhost:7085/BC/",
+        )
+
+        def fake_fetch_text(url, auth=None, headers=None, timeout=15):
+            del auth, headers, timeout
+            if url == "http://localhost:7085/BC/":
+                return 200, {"Content-Type": "text/html"}, "<html></html>"
+            self.assertEqual("http://localhost:7085/BC/client/csrf", url)
+            return 200, {"Content-Type": "application/json", "Set-Cookie": "BCAuth=shim"}, '{"csrfToken":"token"}'
+
+        original_fetch_text = collect_contract.fetch_text
+        try:
+            collect_contract.fetch_text = fake_fetch_text
+            result = collect_contract.collect_web_client(args, {})
+        finally:
+            collect_contract.fetch_text = original_fetch_text
+
+        self.assertEqual(
+            {
+                "httpClass": "2xx",
+                "contentTypeClass": "json",
+                "payloadClass": "json",
+                "hasCsrfToken": True,
+                "setCookiePresent": True,
+            },
+            result["csrf"],
         )
 
     def test_collect_company_records_company_counts_and_first_ids(self):
