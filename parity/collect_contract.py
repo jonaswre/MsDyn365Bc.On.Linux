@@ -203,7 +203,7 @@ def company_name(company: dict[str, Any]) -> str:
 
 
 def item_id_present(item: dict[str, Any]) -> bool:
-    return any(str(item.get(key, "")).strip() for key in ("id", "SystemId", "systemId"))
+    return any(str(item.get(key, "")).strip() for key in ("id", "Id", "SystemId", "systemId"))
 
 
 def automation_base_url(api_url: str) -> str:

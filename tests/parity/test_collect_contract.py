@@ -332,6 +332,9 @@ class CollectContractTests(unittest.TestCase):
             result["soapServices"],
         )
 
+    def test_uppercase_id_is_treated_as_stable_item_id(self):
+        self.assertTrue(collect_contract.item_id_present({"Id": "odata-company-id"}))
+
     def test_failed_user_collection_returns_empty_discovered_user_fields(self):
         args = SimpleNamespace(api_url="http://localhost:7052/BC/api/v2.0", auth="admin:admin")
         diagnostics = {}
