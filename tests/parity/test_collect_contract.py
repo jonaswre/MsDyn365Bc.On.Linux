@@ -66,6 +66,35 @@ class CollectContractTests(unittest.TestCase):
         self.assertEqual([normalize_extension(extensions[0])], custom_apps)
         self.assertTrue(test_framework_present)
 
+    def test_ci_test_runner_extension_is_excluded_from_user_app_footprint(self):
+        extensions = [
+            {
+                "publisher": "ALDirectCompile",
+                "displayName": "Test Runner Extension",
+                "appId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            },
+            {
+                "publisher": "BCContainer",
+                "displayName": "BC Container Smoke Test",
+                "appId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            },
+        ]
+
+        _, custom_apps, test_framework_present = split_apps(extensions)
+
+        self.assertEqual(
+            [
+                {
+                    "publisher": "BCContainer",
+                    "name": "BC Container Smoke Test",
+                    "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                    "version": "",
+                }
+            ],
+            custom_apps,
+        )
+        self.assertFalse(test_framework_present)
+
     def test_extension_normalization_uses_stable_app_identity(self):
         extension = {
             "publisher": "Microsoft",

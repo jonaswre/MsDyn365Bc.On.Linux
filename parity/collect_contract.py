@@ -14,6 +14,9 @@ from urllib import error, parse, request
 LAST_FETCH_ERRORS: dict[str, str] = {}
 RUNNER_KINDS = ("websocket", "bccontainerhelper", "startup-debug")
 HTTP_ERROR_BODY_LIMIT = 800
+CI_HARNESS_APPS = {
+    ("ALDirectCompile", "Test Runner Extension", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+}
 
 
 def http_class(status: int) -> str:
@@ -207,11 +210,20 @@ def has_test_framework_signal(app: dict[str, str]) -> bool:
     return name == "any" or any(signal in name for signal in substring_signals)
 
 
+def is_ci_harness_app(app: dict[str, str]) -> bool:
+    return (
+        app.get("publisher", ""),
+        normalize_company_name(app.get("name", "")),
+        app.get("id", "").lower(),
+    ) in CI_HARNESS_APPS
+
+
 def split_apps(items: list[dict[str, Any]]) -> tuple[list[dict[str, str]], list[dict[str, str]], bool]:
     normalized = [normalize_extension(item) for item in items]
-    microsoft_apps = sorted((item for item in normalized if item["publisher"] == "Microsoft"), key=app_sort_key)
-    custom_apps = sorted((item for item in normalized if item["publisher"] != "Microsoft"), key=app_sort_key)
-    return microsoft_apps, custom_apps, any(has_test_framework_signal(item) for item in normalized)
+    user_visible_apps = [item for item in normalized if not is_ci_harness_app(item)]
+    microsoft_apps = sorted((item for item in user_visible_apps if item["publisher"] == "Microsoft"), key=app_sort_key)
+    custom_apps = sorted((item for item in user_visible_apps if item["publisher"] != "Microsoft"), key=app_sort_key)
+    return microsoft_apps, custom_apps, any(has_test_framework_signal(item) for item in user_visible_apps)
 
 
 def user_name(item: dict[str, Any]) -> str:

@@ -1,10 +1,1 @@
-[
-  {
-    "path": "apps.customApps[]",
-    "match": {
-      "publisher": "ALDirectCompile",
-      "name": "Test Runner Extension"
-    },
-    "reason": "Linux runner installs a custom API extension for v1 test orchestration."
-  }
-]
+[]
