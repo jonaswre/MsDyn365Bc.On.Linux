@@ -69,6 +69,7 @@ namespace Microsoft.AspNetCore.Hosting
 
             builder.UseKestrel(k =>
             {
+                k.AddServerHeader = false;
                 k.AllowSynchronousIO = opts.AllowSynchronousIO;
                 if (opts.MaxRequestBodySize.HasValue)
                     k.Limits.MaxRequestBodySize = opts.MaxRequestBodySize;
@@ -84,7 +85,7 @@ namespace Microsoft.AspNetCore.Hosting
 
         public static IWebHostBuilder UseHttpSys(this IWebHostBuilder builder)
         {
-            return builder.UseKestrel();
+            return builder.UseKestrel(k => k.AddServerHeader = false);
         }
     }
 
@@ -140,6 +141,10 @@ namespace Microsoft.AspNetCore.Hosting
                 {
                     app.UseWebSockets();
                     app.Use(WebClientSignInCompatibility);
+                }
+                else
+                {
+                    app.Use(WindowsServerHeaderCompatibility);
                 }
 
                 if (!string.IsNullOrEmpty(pathBase))
@@ -248,6 +253,19 @@ namespace Microsoft.AspNetCore.Hosting
             var separator = version.IndexOf('.');
             var majorText = separator >= 0 ? version.Substring(0, separator) : version;
             return int.TryParse(majorText, out var major) && major < 28;
+        }
+
+        private static async System.Threading.Tasks.Task WindowsServerHeaderCompatibility(
+            Microsoft.AspNetCore.Http.HttpContext context,
+            Func<System.Threading.Tasks.Task> nextMiddleware)
+        {
+            context.Response.OnStarting(() =>
+            {
+                context.Response.Headers["Server"] = "Microsoft-HTTPAPI/2.0";
+                return System.Threading.Tasks.Task.CompletedTask;
+            });
+
+            await nextMiddleware();
         }
 
         private static string FullRequestPath(Microsoft.AspNetCore.Http.HttpContext context)

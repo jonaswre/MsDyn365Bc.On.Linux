@@ -56,6 +56,16 @@ class HttpSysStubCompatibilityTests(unittest.TestCase):
         self.assertIn('NonEmptyEnvironment("BC_VERSION", "latest")', self.source())
         self.assertIn("BC 28", self.source())
 
+    def test_server_header_fingerprint_matches_windows_services_without_web_client_leak(self):
+        source = self.source()
+        server_header = self.method_body("WindowsServerHeaderCompatibility")
+
+        self.assertIn("k.AddServerHeader = false", source)
+        self.assertIn("if (IsWebClientPathBase(pathBase))", source)
+        self.assertIn("app.Use(WindowsServerHeaderCompatibility);", source)
+        self.assertIn("OnStarting", server_header)
+        self.assertIn('"Microsoft-HTTPAPI/2.0"', server_header)
+
 
 if __name__ == "__main__":
     unittest.main()
