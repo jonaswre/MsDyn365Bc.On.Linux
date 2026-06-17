@@ -281,6 +281,10 @@ def collection_failure_message(label: str, status: int, url: str) -> str:
     return message
 
 
+def optional_url(value: str | None, fallback: str) -> str:
+    return value if value else fallback
+
+
 def surface_probe(url: str, valid_auth: str, invalid_auth: str, diagnostics: dict[str, str], name: str) -> dict[str, Any]:
     valid_status, _ = fetch_status(url, valid_auth)
     invalid_status, _ = fetch_status(url, invalid_auth)
@@ -314,17 +318,22 @@ def websocket_probe(url: str, valid_auth: str, invalid_auth: str, diagnostics: d
 
 def collect_surface(args: argparse.Namespace, diagnostics: dict[str, str]) -> dict[str, dict[str, Any]]:
     endpoints = {
-        "management": join_url(args.base_url, "Management"),
-        "webClient": join_url(args.base_url, "client/SignIn"),
-        "clientSignIn": join_url(args.base_url, "client/SignIn"),
-        "soap": join_url(args.base_url, "WS/Services"),
+        "management": optional_url(args.management_url, join_url(args.base_url, "Management")),
+        "webClient": optional_url(args.web_client_url, join_url(args.base_url, "client/SignIn")),
+        "clientSignIn": optional_url(args.web_client_url, join_url(args.base_url, "client/SignIn")),
+        "soap": optional_url(args.soap_url, join_url(args.base_url, "WS/Services")),
         "odata": join_url(args.odata_url, "Company"),
         "api": join_url(args.api_url, "companies"),
         "dev": join_url(args.dev_url, "metadata"),
-        "managementApi": join_url(args.base_url, "managementApi/v1.0/companies"),
+        "managementApi": optional_url(args.management_api_url, join_url(args.base_url, "managementApi/v1.0/companies")),
     }
     surface = {name: surface_probe(url, args.auth, args.invalid_auth, diagnostics, name) for name, url in endpoints.items()}
-    surface["clientWebSocket"] = websocket_probe(join_url(args.base_url, "client/csh"), args.auth, args.invalid_auth, diagnostics)
+    surface["clientWebSocket"] = websocket_probe(
+        optional_url(args.client_websocket_url, join_url(args.base_url, "client/csh")),
+        args.auth,
+        args.invalid_auth,
+        diagnostics,
+    )
     return surface
 
 
@@ -546,6 +555,11 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--platform", required=True, choices=("linux", "windows"))
     parser.add_argument("--bc-version", required=True)
     parser.add_argument("--base-url", required=True)
+    parser.add_argument("--management-url")
+    parser.add_argument("--management-api-url")
+    parser.add_argument("--soap-url")
+    parser.add_argument("--web-client-url")
+    parser.add_argument("--client-websocket-url")
     parser.add_argument("--dev-url", required=True)
     parser.add_argument("--odata-url", required=True)
     parser.add_argument("--api-url", required=True)

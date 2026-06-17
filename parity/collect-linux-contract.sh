@@ -49,6 +49,11 @@ python3 "$repo_dir/parity/collect_contract.py" \
   --platform linux \
   --bc-version "$bc_version" \
   --base-url "http://localhost:7046/BC" \
+  --management-url "http://localhost:7045/BC/Management" \
+  --management-api-url "http://localhost:7086/BC/managementApi/v1.0/companies" \
+  --soap-url "http://localhost:7047/BC/WS/Services" \
+  --web-client-url "http://localhost:7085/BC/client/SignIn" \
+  --client-websocket-url "http://localhost:7085/BC/client/csh" \
   --dev-url "http://localhost:7049/BC/dev" \
   --odata-url "http://localhost:7048/BC/ODataV4" \
   --api-url "http://localhost:7052/BC/api/v2.0" \

@@ -134,6 +134,11 @@ class CollectContractTests(unittest.TestCase):
     def test_collect_surface_includes_web_client(self):
         args = SimpleNamespace(
             base_url="http://localhost:7046/BC",
+            management_url=None,
+            management_api_url=None,
+            soap_url=None,
+            web_client_url=None,
+            client_websocket_url=None,
             api_url="http://localhost:7052/BC/api/v2.0",
             odata_url="http://localhost:7048/BC/ODataV4",
             dev_url="http://localhost:7049/BC/dev",
@@ -164,6 +169,48 @@ class CollectContractTests(unittest.TestCase):
 
         self.assertIn("webClient", surface)
         self.assertEqual("http://localhost:7046/BC/client/SignIn", probed["webClient"])
+
+    def test_collect_surface_uses_explicit_service_urls(self):
+        args = SimpleNamespace(
+            base_url="http://localhost:7046/BC",
+            management_url="http://localhost:7045/BC/Management",
+            management_api_url="http://localhost:7086/BC/managementApi/v1.0/companies",
+            soap_url="http://localhost:7047/BC/WS/Services",
+            web_client_url="http://localhost:7085/BC/client/SignIn",
+            client_websocket_url="http://localhost:7085/BC/client/csh",
+            api_url="http://localhost:7052/BC/api/v2.0",
+            odata_url="http://localhost:7048/BC/ODataV4",
+            dev_url="http://localhost:7049/BC/dev",
+            auth="admin:admin",
+            invalid_auth="not-admin:not-admin",
+        )
+        probed = {}
+
+        def fake_surface_probe(url, valid_auth, invalid_auth, diagnostics, name):
+            del valid_auth, invalid_auth, diagnostics
+            probed[name] = url
+            return {"tcpOpen": True, "httpClass": "2xx", "requiresAuth": True}
+
+        def fake_websocket_probe(url, valid_auth, invalid_auth, diagnostics):
+            del valid_auth, invalid_auth, diagnostics
+            probed["clientWebSocket"] = url
+            return {"tcpOpen": True, "httpClass": "4xx", "requiresAuth": True, "websocketUpgrade": False}
+
+        original_surface_probe = collect_contract.surface_probe
+        original_websocket_probe = collect_contract.websocket_probe
+        try:
+            collect_contract.surface_probe = fake_surface_probe
+            collect_contract.websocket_probe = fake_websocket_probe
+            collect_contract.collect_surface(args, {})
+        finally:
+            collect_contract.surface_probe = original_surface_probe
+            collect_contract.websocket_probe = original_websocket_probe
+
+        self.assertEqual("http://localhost:7045/BC/Management", probed["management"])
+        self.assertEqual("http://localhost:7047/BC/WS/Services", probed["soap"])
+        self.assertEqual("http://localhost:7085/BC/client/SignIn", probed["webClient"])
+        self.assertEqual("http://localhost:7085/BC/client/csh", probed["clientWebSocket"])
+        self.assertEqual("http://localhost:7086/BC/managementApi/v1.0/companies", probed["managementApi"])
 
     def test_failed_user_collection_returns_empty_discovered_user_fields(self):
         args = SimpleNamespace(api_url="http://localhost:7052/BC/api/v2.0", auth="admin:admin")

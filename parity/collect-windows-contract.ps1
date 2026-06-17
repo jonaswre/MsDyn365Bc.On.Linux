@@ -216,10 +216,35 @@ try {
 }
 
 try {
+    $permissionsMockApps = @(
+        Get-BcContainerAppInfo -containerName $ContainerName -tenant default -tenantSpecificProperties |
+            Where-Object { $_.Publisher -eq "Microsoft" -and $_.Name -eq "Permissions Mock" }
+    )
+    foreach ($app in $permissionsMockApps) {
+        UnPublish-BcContainerApp `
+            -containerName $ContainerName `
+            -publisher $app.Publisher `
+            -name $app.Name `
+            -version $app.Version `
+            -unInstall `
+            -doNotSaveData `
+            -doNotSaveSchema `
+            -force
+    }
+} catch {
+    Fail-Capability "WINDOWS_TEST_ONLY_APP_CLEANUP_FAILED" $_.Exception.Message
+}
+
+try {
     & python "$repoRoot\parity\collect_contract.py" `
         --platform windows `
         --bc-version $BcVersion `
         --base-url "http://localhost:7046/BC" `
+        --management-url "http://localhost:7045/BC/Management" `
+        --management-api-url "http://localhost:7086/BC/managementApi/v1.0/companies" `
+        --soap-url "http://localhost:7047/BC/WS/Services" `
+        --web-client-url "http://localhost:7085/BC/client/SignIn" `
+        --client-websocket-url "http://localhost:7085/BC/client/csh" `
         --dev-url "http://localhost:7049/BC/dev" `
         --odata-url "http://localhost:7048/BC/ODataV4" `
         --api-url "http://localhost:7052/BC/api/v2.0" `
