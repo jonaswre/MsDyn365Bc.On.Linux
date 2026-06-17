@@ -85,6 +85,13 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn("total=0 passed=0 failed=1 skipped=0", script)
         self.assertIn("exit 0", script)
 
+    def test_run_tests_uses_api_port_candidate_before_custom_api_exists(self):
+        script = Path("scripts/run-tests.sh").read_text(encoding="utf-8")
+
+        self.assertIn('API_PORT_BASE="$(derive_api_base_candidates | sed -n', script)
+        self.assertIn('[ -z "$API_PORT_BASE" ] && API_PORT_BASE="$BASE_URL"', script)
+        self.assertIn("TestRunner API not available at ${API_BASE}/codeunitRunRequests", script)
+
     def test_linux_diagnostics_are_captured_after_contract_collection(self):
         names = self.step_names()
 

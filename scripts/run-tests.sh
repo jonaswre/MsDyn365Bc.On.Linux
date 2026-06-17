@@ -272,6 +272,9 @@ while IFS= read -r candidate; do
 done <<EOF
 $(derive_api_base_candidates)
 EOF
+if [ -z "$API_PORT_BASE" ]; then
+    API_PORT_BASE="$(derive_api_base_candidates | sed -n '1p')"
+fi
 [ -z "$API_PORT_BASE" ] && API_PORT_BASE="$BASE_URL"
 API_BASE="${API_PORT_BASE}/api/custom/automation/v1.0/companies(${COMPANY_ID})"
 
@@ -298,7 +301,7 @@ else
         echo -n "."
     done
     echo ""
-    [ "$HTTP" != "200" ] && echo "ERROR: TestRunner API not available" && exit 1
+    [ "$HTTP" != "200" ] && echo "ERROR: TestRunner API not available at ${API_BASE}/codeunitRunRequests (HTTP $HTTP)" && exit 1
     echo "  API ready"
 fi
 
