@@ -238,8 +238,19 @@ namespace Microsoft.AspNetCore.Hosting
                 || path.StartsWith("/BC/managementApi/", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(path, "/BC/dev", StringComparison.OrdinalIgnoreCase)
                 || path.StartsWith("/BC/dev/", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(path, "/BC/client/csh", StringComparison.OrdinalIgnoreCase)
-                || path.StartsWith("/BC/client/csh/", StringComparison.OrdinalIgnoreCase);
+                || (IsLegacyPublicClientWebSocketCompatibilityVersion()
+                    && (string.Equals(path, "/BC/client/csh", StringComparison.OrdinalIgnoreCase)
+                        || path.StartsWith("/BC/client/csh/", StringComparison.OrdinalIgnoreCase)));
+        }
+
+        private static bool IsLegacyPublicClientWebSocketCompatibilityVersion()
+        {
+            // BC 28 challenges invalid Basic credentials on /BC/client/csh;
+            // older supported versions keep the Windows public compatibility behavior.
+            var version = NonEmptyEnvironment("BC_VERSION", "latest");
+            var separator = version.IndexOf('.');
+            var majorText = separator >= 0 ? version.Substring(0, separator) : version;
+            return int.TryParse(majorText, out var major) && major < 28;
         }
 
         private static string FullRequestPath(Microsoft.AspNetCore.Http.HttpContext context)

@@ -35,6 +35,13 @@ class HttpSysStubCompatibilityTests(unittest.TestCase):
         self.assertNotIn("/BC/ODataV4", body)
         self.assertIn("Windows exposes these surfaces without a Basic challenge", self.source())
 
+    def test_client_websocket_public_compatibility_is_version_gated(self):
+        body = self.method_body("IsWindowsPublicCompatibilityPath")
+
+        self.assertIn("IsLegacyPublicClientWebSocketCompatibilityVersion()", body)
+        self.assertIn('NonEmptyEnvironment("BC_VERSION", "latest")', self.source())
+        self.assertIn("BC 28", self.source())
+
 
 if __name__ == "__main__":
     unittest.main()
