@@ -62,7 +62,7 @@ jobs:
             28) AL_TOOL="17.0.34.45391"; RUNTIME="17.0" ;;
             *) echo "Unsupported BC major $BC_MAJOR"; exit 1 ;;
           esac
-          export RUNTIME
+          export RUNTIME BC_MAJOR
           PKG="microsoft.dynamics.businesscentral.development.tools.linux"
           EXTRACT_DIR="$HOME/.al-tool-cache/$AL_TOOL"
           mkdir -p "$EXTRACT_DIR"
@@ -113,11 +113,46 @@ jobs:
             --test-runner-app "$TEST_RUNNER_APP" \
             --package-cache extensions/smoke-test/.alpackages \
             --out "patched-test-runner-$BC_VERSION.app"
+          rm -rf extensions/TestRunnerExtension/.alpackages
+          python3 scripts/stage-symbols.py \
+            --artifact-dir "artifact-cache/$BC_VERSION" \
+            --app-json extensions/TestRunnerExtension/app.json \
+            --out-dir extensions/TestRunnerExtension/.alpackages
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("extensions/TestRunnerExtension/app.json")
+          data = json.loads(path.read_text())
+          data["runtime"] = os.environ["RUNTIME"]
+          for dep in data.get("dependencies", []):
+              if dep.get("id", "").lower() == "23de40a6-dfe8-4f80-80db-d70f83ce8caf":
+                  dep["version"] = f"{os.environ['BC_MAJOR']}.0.0.0"
+          path.write_text(json.dumps(data, indent=2) + "\n")
+          PY
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+
+          sys.path.insert(0, "scripts")
+          from _bcapp import read_app_info  # noqa
+
+          cache = Path("extensions/TestRunnerExtension/.alpackages")
+          test_runner_id = "23de40a6-dfe8-4f80-80db-d70f83ce8caf"
+          for path in cache.glob("*.app"):
+              info = read_app_info(str(path))
+              if info and info.get("id") == test_runner_id:
+                  path.unlink()
+          PY
+          cp "patched-test-runner-$BC_VERSION.app" extensions/TestRunnerExtension/.alpackages/
+          "$HOME/al" compile "/project:extensions/TestRunnerExtension" "/packagecachepath:extensions/TestRunnerExtension/.alpackages" "/out:test-runner-extension-$BC_VERSION.app"
           python3 scripts/resolve-keep-app-ids.py \
             --artifact-dir "artifact-cache/$BC_VERSION" \
             --app-json extensions/smoke-test/app.json \
             --app-json extensions/TestRunnerExtension/app.json \
             --app-file "patched-test-runner-$BC_VERSION.app" \
+            --app-file "test-runner-extension-$BC_VERSION.app" \
             > "keep-app-ids-$BC_VERSION.txt"
       - uses: actions/upload-artifact@v4
         with:
@@ -125,6 +160,7 @@ jobs:
           path: |
             smoke-test-${{ matrix.bc_version }}.app
             patched-test-runner-${{ matrix.bc_version }}.app
+            test-runner-extension-${{ matrix.bc_version }}.app
             keep-app-ids-${{ matrix.bc_version }}.txt
 
   linux-contract:
@@ -175,7 +211,8 @@ jobs:
             "build/smoke-test-$BC_VERSION.app" \
             "$BC_VERSION" \
             "contracts/linux-$BC_VERSION.json" \
-            "build/patched-test-runner-$BC_VERSION.app"
+            "build/patched-test-runner-$BC_VERSION.app" \
+            "build/test-runner-extension-$BC_VERSION.app"
       - name: Capture Linux diagnostics
         if: failure()
         run: |

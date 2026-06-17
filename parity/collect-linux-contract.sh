@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-app_path="${1:?usage: collect-linux-contract.sh <smoke-app> <bc-version> <out-json> <patched-test-runner-app>}"
-bc_version="${2:?usage: collect-linux-contract.sh <smoke-app> <bc-version> <out-json> <patched-test-runner-app>}"
-out_json="${3:?usage: collect-linux-contract.sh <smoke-app> <bc-version> <out-json> <patched-test-runner-app>}"
-patched_test_runner_app="${4:?usage: collect-linux-contract.sh <smoke-app> <bc-version> <out-json> <patched-test-runner-app>}"
+app_path="${1:?usage: collect-linux-contract.sh <smoke-app> <bc-version> <out-json> <patched-test-runner-app> [test-runner-extension-app]}"
+bc_version="${2:?usage: collect-linux-contract.sh <smoke-app> <bc-version> <out-json> <patched-test-runner-app> [test-runner-extension-app]}"
+out_json="${3:?usage: collect-linux-contract.sh <smoke-app> <bc-version> <out-json> <patched-test-runner-app> [test-runner-extension-app]}"
+patched_test_runner_app="${4:?usage: collect-linux-contract.sh <smoke-app> <bc-version> <out-json> <patched-test-runner-app> [test-runner-extension-app]}"
 auth="${BC_USERNAME:-admin}:${BC_PASSWORD:-admin}"
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
+test_runner_extension_app="${5:-$repo_dir/extensions/TestRunnerExtension/TestRunnerExtension.app}"
 test_log="$(mktemp)"
 trap 'rm -f "$test_log"' EXIT
 test_status=0
@@ -37,6 +38,7 @@ if ! bc_publish_app "$patched_test_runner_app" "http://localhost:7049/BC/dev" "$
 else
   "$repo_dir/scripts/run-tests.sh" \
     --app "$app_path" \
+    --test-runner-app "$test_runner_extension_app" \
     --auth "$auth" \
     --base-url "http://localhost:7046/BC" \
     --codeunit-range "70000|70001" \

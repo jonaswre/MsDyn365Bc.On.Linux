@@ -30,7 +30,26 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn("--app-json extensions/smoke-test/app.json", script)
         self.assertIn("--app-json extensions/TestRunnerExtension/app.json", script)
         self.assertIn("--app-file \"patched-test-runner-$BC_VERSION.app\"", script)
+        self.assertIn("--app-file \"test-runner-extension-$BC_VERSION.app\"", script)
         self.assertIn("keep-app-ids-${{ matrix.bc_version }}.txt", upload["with"]["path"])
+
+    def test_build_job_uploads_version_matched_test_runner_extension(self):
+        steps = self.workflow()["jobs"]["build-smoke-app"]["steps"]
+        script = "\n".join(step.get("run", "") for step in steps)
+        upload = next(step for step in steps if step.get("uses") == "actions/upload-artifact@v4")
+
+        self.assertIn("extensions/TestRunnerExtension/.alpackages", script)
+        self.assertIn("patched-test-runner-$BC_VERSION.app", script)
+        self.assertIn("/project:extensions/TestRunnerExtension", script)
+        self.assertIn("/out:test-runner-extension-$BC_VERSION.app", script)
+        self.assertIn("test-runner-extension-${{ matrix.bc_version }}.app", upload["with"]["path"])
+
+    def test_linux_contract_uses_version_matched_test_runner_extension(self):
+        steps = self.linux_contract_job()["steps"]
+        collect = next(step for step in steps if step.get("name") == "Collect Linux contract")
+        script = collect["run"]
+
+        self.assertIn("build/test-runner-extension-$BC_VERSION.app", script)
 
     def test_linux_contract_loads_keep_app_ids_before_startup(self):
         steps = self.linux_contract_job()["steps"]
