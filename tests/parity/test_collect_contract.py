@@ -242,6 +242,96 @@ class CollectContractTests(unittest.TestCase):
         self.assertEqual("http://localhost:7085/BC/client/csh", probed["clientWebSocket"])
         self.assertEqual("http://localhost:7086/BC/managementApi/v1.0/companies", probed["managementApi"])
 
+    def test_collect_company_records_company_counts_and_first_ids(self):
+        args = SimpleNamespace(
+            api_url="http://localhost:7052/BC/api/v2.0",
+            odata_url="http://localhost:7048/BC/ODataV4",
+            auth="admin:admin",
+        )
+        payloads = {
+            "http://localhost:7052/BC/api/v2.0/companies": {
+                "value": [{"id": "api-company-id", "name": "CRONUS International Ltd."}]
+            },
+            "http://localhost:7048/BC/ODataV4/Company": {
+                "value": [{"Name": "CRONUS International Ltd.", "SystemId": "odata-company-id"}]
+            },
+        }
+
+        def fake_fetch_json(url, auth, timeout=15):
+            del auth, timeout
+            return 200, payloads[url]
+
+        original_fetch_json = collect_contract.fetch_json
+        try:
+            collect_contract.fetch_json = fake_fetch_json
+            result = collect_contract.collect_company(args, {})
+        finally:
+            collect_contract.fetch_json = original_fetch_json
+
+        self.assertEqual(1, result["apiCompanyCount"])
+        self.assertEqual(1, result["odataCompanyCount"])
+        self.assertTrue(result["apiFirstCompanyIdPresent"])
+        self.assertTrue(result["odataFirstCompanyIdPresent"])
+
+    def test_collect_integration_classifies_api_odata_and_soap_payloads(self):
+        args = SimpleNamespace(
+            base_url="http://localhost:7046/BC",
+            soap_url="http://localhost:7047/BC/WS/Services",
+            api_url="http://localhost:7052/BC/api/v2.0",
+            odata_url="http://localhost:7048/BC/ODataV4",
+            auth="admin:admin",
+        )
+
+        def fake_fetch_json(url, auth, timeout=15):
+            del auth, timeout
+            if url.endswith("/companies"):
+                return 200, {"value": [{"id": "api-company-id", "name": "CRONUS International Ltd."}]}
+            return 200, {"value": [{"Name": "CRONUS International Ltd.", "SystemId": "odata-company-id"}]}
+
+        def fake_fetch_text(url, auth, headers=None, timeout=15):
+            del auth, headers, timeout
+            self.assertEqual("http://localhost:7047/BC/WS/Services", url)
+            return 200, {"Content-Type": "text/xml; charset=utf-8"}, "<Services><Service>Company</Service></Services>"
+
+        original_fetch_json = collect_contract.fetch_json
+        original_fetch_text = collect_contract.fetch_text
+        try:
+            collect_contract.fetch_json = fake_fetch_json
+            collect_contract.fetch_text = fake_fetch_text
+            result = collect_contract.collect_integration(args, {})
+        finally:
+            collect_contract.fetch_json = original_fetch_json
+            collect_contract.fetch_text = original_fetch_text
+
+        self.assertEqual(
+            {
+                "httpClass": "2xx",
+                "readSucceeded": True,
+                "itemCount": 1,
+                "firstItemKeys": ["id", "name"],
+            },
+            result["apiCompanies"],
+        )
+        self.assertEqual(
+            {
+                "httpClass": "2xx",
+                "readSucceeded": True,
+                "itemCount": 1,
+                "firstItemKeys": ["Name", "SystemId"],
+            },
+            result["odataCompany"],
+        )
+        self.assertEqual(
+            {
+                "httpClass": "2xx",
+                "readSucceeded": True,
+                "contentTypeClass": "xml",
+                "payloadClass": "xml",
+                "xmlRoot": "Services",
+            },
+            result["soapServices"],
+        )
+
     def test_failed_user_collection_returns_empty_discovered_user_fields(self):
         args = SimpleNamespace(api_url="http://localhost:7052/BC/api/v2.0", auth="admin:admin")
         diagnostics = {}

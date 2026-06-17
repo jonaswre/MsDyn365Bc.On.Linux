@@ -6,6 +6,7 @@ import base64
 import json
 import socket
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 from urllib import error, parse, request
@@ -14,6 +15,7 @@ from urllib import error, parse, request
 LAST_FETCH_ERRORS: dict[str, str] = {}
 RUNNER_KINDS = ("websocket", "bccontainerhelper", "startup-debug")
 HTTP_ERROR_BODY_LIMIT = 800
+HTTP_TEXT_BODY_LIMIT = 65536
 CI_HARNESS_APPS = {
     ("ALDirectCompile", "Test Runner Extension", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
 }
@@ -151,6 +153,27 @@ def fetch_status(url: str, auth: str | None = None, headers: dict[str, str] | No
         return 0, {}
 
 
+def fetch_text(
+    url: str, auth: str | None = None, headers: dict[str, str] | None = None, timeout: int = 15
+) -> tuple[int, dict[str, str], str]:
+    request_headers = dict(headers or {})
+    if auth is not None:
+        request_headers["Authorization"] = basic_header(auth)
+    req = request.Request(url, headers=request_headers)
+    try:
+        with request.urlopen(req, timeout=timeout) as response:
+            LAST_FETCH_ERRORS.pop(url, None)
+            body = response.read(HTTP_TEXT_BODY_LIMIT).decode("utf-8", errors="replace")
+            return response.status, dict(response.headers.items()), body
+    except error.HTTPError as exc:
+        body = exc.read(HTTP_TEXT_BODY_LIMIT).decode("utf-8", errors="replace")
+        LAST_FETCH_ERRORS.pop(url, None)
+        return exc.code, dict(exc.headers.items()), body
+    except Exception as exc:
+        LAST_FETCH_ERRORS[url] = f"{type(exc).__name__}: {exc}"
+        return 0, {}, ""
+
+
 def auth_scheme_class(headers: dict[str, str]) -> str:
     value = " ".join(header_value for key, header_value in headers.items() if key.lower() == "www-authenticate").lower()
     if "basic" in value:
@@ -177,6 +200,10 @@ def company_name(company: dict[str, Any]) -> str:
         if key in company:
             return normalize_company_name(str(company.get(key, "")))
     return ""
+
+
+def item_id_present(item: dict[str, Any]) -> bool:
+    return any(str(item.get(key, "")).strip() for key in ("id", "SystemId", "systemId"))
 
 
 def automation_base_url(api_url: str) -> str:
@@ -297,6 +324,41 @@ def optional_url(value: str | None, fallback: str) -> str:
     return value if value else fallback
 
 
+def content_type_class(headers: dict[str, str]) -> str:
+    value = " ".join(header_value for key, header_value in headers.items() if key.lower() == "content-type").lower()
+    if "json" in value:
+        return "json"
+    if "xml" in value or "soap" in value:
+        return "xml"
+    if "html" in value:
+        return "html"
+    if "text" in value:
+        return "text"
+    return "unknown"
+
+
+def xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def payload_signature(body: str) -> dict[str, str]:
+    text = body.strip()
+    if not text:
+        return {"payloadClass": "empty", "xmlRoot": ""}
+    if text.startswith("{") or text.startswith("["):
+        try:
+            json.loads(text)
+            return {"payloadClass": "json", "xmlRoot": ""}
+        except json.JSONDecodeError:
+            pass
+    if text.startswith("<"):
+        try:
+            return {"payloadClass": "xml", "xmlRoot": xml_local_name(ET.fromstring(text).tag)}
+        except ET.ParseError:
+            return {"payloadClass": "text", "xmlRoot": ""}
+    return {"payloadClass": "text", "xmlRoot": ""}
+
+
 def surface_probe(url: str, valid_auth: str, invalid_auth: str, diagnostics: dict[str, str], name: str) -> dict[str, Any]:
     valid_status, _ = fetch_status(url, valid_auth)
     invalid_status, _ = fetch_status(url, invalid_auth)
@@ -392,11 +454,48 @@ def collect_company(args: argparse.Namespace, diagnostics: dict[str, str]) -> di
     api_companies = extract_items(api_payload)
     odata_companies = extract_items(odata_payload)
     first_company = api_companies[0] if api_companies else (odata_companies[0] if odata_companies else {})
+    first_api_company = api_companies[0] if api_companies else {}
+    first_odata_company = odata_companies[0] if odata_companies else {}
     return {
         "companyCountAtLeastOne": bool(api_companies or odata_companies),
+        "apiCompanyCount": len(api_companies),
+        "odataCompanyCount": len(odata_companies),
         "firstCompanyName": company_name(first_company),
+        "apiFirstCompanyIdPresent": item_id_present(first_api_company),
+        "odataFirstCompanyIdPresent": item_id_present(first_odata_company),
         "apiCompanyShape": sorted(api_companies[0].keys()) if api_companies else [],
         "odataCompanyShape": sorted(odata_companies[0].keys()) if odata_companies else [],
+    }
+
+
+def collection_probe(url: str, auth: str, diagnostics: dict[str, str], name: str) -> dict[str, Any]:
+    status, payload = fetch_json(url, auth)
+    record_zero_status(diagnostics, f"integration.{name}", url, status)
+    items = extract_items(payload)
+    return {
+        "httpClass": http_class(status),
+        "readSucceeded": 200 <= status <= 299,
+        "itemCount": len(items),
+        "firstItemKeys": sorted(items[0].keys()) if items else [],
+    }
+
+
+def soap_services_probe(url: str, auth: str, diagnostics: dict[str, str]) -> dict[str, Any]:
+    status, headers, body = fetch_text(url, auth)
+    record_zero_status(diagnostics, "integration.soapServices", url, status)
+    return {
+        "httpClass": http_class(status),
+        "readSucceeded": 200 <= status <= 299,
+        "contentTypeClass": content_type_class(headers),
+        **payload_signature(body),
+    }
+
+
+def collect_integration(args: argparse.Namespace, diagnostics: dict[str, str]) -> dict[str, Any]:
+    return {
+        "apiCompanies": collection_probe(join_url(args.api_url, "companies"), args.auth, diagnostics, "apiCompanies"),
+        "odataCompany": collection_probe(join_url(args.odata_url, "Company"), args.auth, diagnostics, "odataCompany"),
+        "soapServices": soap_services_probe(optional_url(args.soap_url, join_url(args.base_url, "WS/Services")), args.auth, diagnostics),
     }
 
 
@@ -554,6 +653,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "surface": collect_surface(args, diagnostics),
         "auth": auth,
         "company": collect_company(args, diagnostics),
+        "integration": collect_integration(args, diagnostics),
         "dev": collect_dev(args, diagnostics),
         "tests": collect_tests(args.test_output, args.runner_kind, diagnostics),
         "apps": collect_apps(args, diagnostics, company_id),
