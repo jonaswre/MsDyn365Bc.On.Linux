@@ -147,12 +147,14 @@ jobs:
           PY
           cp "patched-test-runner-$BC_VERSION.app" extensions/TestRunnerExtension/.alpackages/
           "$HOME/al" compile "/project:extensions/TestRunnerExtension" "/packagecachepath:extensions/TestRunnerExtension/.alpackages" "/out:test-runner-extension-$BC_VERSION.app"
+          AUTOMATION_API_V2_APP_ID=10cb69d9-bc8a-4d27-970a-9e110e9db2a5
           python3 scripts/resolve-keep-app-ids.py \
             --artifact-dir "artifact-cache/$BC_VERSION" \
             --app-json extensions/smoke-test/app.json \
             --app-json extensions/TestRunnerExtension/app.json \
             --app-file "patched-test-runner-$BC_VERSION.app" \
             --app-file "test-runner-extension-$BC_VERSION.app" \
+            --extra-ids "$AUTOMATION_API_V2_APP_ID" \
             > "keep-app-ids-$BC_VERSION.txt"
           python3 - <<'PY'
           import os

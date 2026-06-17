@@ -1,5 +1,7 @@
 import unittest
+from io import BytesIO
 from types import SimpleNamespace
+from urllib.error import HTTPError
 
 import parity.collect_contract as collect_contract
 from parity.collect_contract import (
@@ -238,6 +240,36 @@ class CollectContractTests(unittest.TestCase):
 
         self.assertEqual(0, status)
         self.assertIn("connection exploded", diagnostics["dev.metadata"])
+
+    def test_fetch_json_preserves_http_error_body_diagnostic(self):
+        url = "http://localhost:7052/BC/api/microsoft/automation/v2.0/companies(id)/extensions"
+        body = b'{"error":{"code":"BadRequest","message":"No HTTP resource was found."}}'
+
+        def fake_urlopen(req, timeout=15):
+            del req, timeout
+            raise HTTPError(url, 404, "Not Found", {}, BytesIO(body))
+
+        original_urlopen = collect_contract.request.urlopen
+        collect_contract.LAST_FETCH_ERRORS.clear()
+        try:
+            collect_contract.request.urlopen = fake_urlopen
+            status, payload = collect_contract.fetch_json(url, "admin:admin")
+        finally:
+            collect_contract.request.urlopen = original_urlopen
+
+        self.assertEqual(404, status)
+        self.assertEqual({}, payload)
+        self.assertIn("HTTP 404", collect_contract.LAST_FETCH_ERRORS[url])
+        self.assertIn("No HTTP resource was found", collect_contract.LAST_FETCH_ERRORS[url])
+
+    def test_collection_failure_message_includes_http_error_body(self):
+        url = "http://localhost:7052/BC/api/microsoft/automation/v2.0/companies(id)/extensions"
+        collect_contract.LAST_FETCH_ERRORS[url] = "HTTP 404: No HTTP resource was found."
+
+        message = collect_contract.collection_failure_message("extension collection failed", 404, url)
+
+        self.assertIn("4xx", message)
+        self.assertIn("No HTTP resource was found", message)
 
     def test_collect_apps_preserves_fetch_exception_diagnostics(self):
         args = SimpleNamespace(api_url="http://localhost:7052/BC/api/v2.0", auth="admin:admin")

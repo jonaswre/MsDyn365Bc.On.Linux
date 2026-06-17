@@ -43,6 +43,13 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn("ids.discard(test_runner_id)", script)
         self.assertIn("keep-app-ids-${{ matrix.bc_version }}.txt", upload["with"]["path"])
 
+    def test_build_job_keeps_microsoft_automation_api_v2_app(self):
+        steps = self.workflow()["jobs"]["build-smoke-app"]["steps"]
+        script = "\n".join(step.get("run", "") for step in steps)
+
+        self.assertIn("AUTOMATION_API_V2_APP_ID=10cb69d9-bc8a-4d27-970a-9e110e9db2a5", script)
+        self.assertIn("--extra-ids \"$AUTOMATION_API_V2_APP_ID\"", script)
+
     def test_build_job_uploads_version_matched_test_runner_extension(self):
         steps = self.workflow()["jobs"]["build-smoke-app"]["steps"]
         script = "\n".join(step.get("run", "") for step in steps)

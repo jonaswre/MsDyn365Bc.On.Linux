@@ -13,6 +13,7 @@ from urllib import error, parse, request
 
 LAST_FETCH_ERRORS: dict[str, str] = {}
 RUNNER_KINDS = ("websocket", "bccontainerhelper", "startup-debug")
+HTTP_ERROR_BODY_LIMIT = 800
 
 
 def http_class(status: int) -> str:
@@ -103,7 +104,11 @@ def fetch_json(url: str, auth: str, timeout: int = 15) -> tuple[int, dict]:
         LAST_FETCH_ERRORS[url] = f"{type(exc).__name__}: {exc}"
         return 0, {}
     except error.HTTPError as exc:
-        LAST_FETCH_ERRORS.pop(url, None)
+        body = exc.read().decode("utf-8", errors="replace").strip()
+        if body:
+            LAST_FETCH_ERRORS[url] = f"HTTP {exc.code}: {body[:HTTP_ERROR_BODY_LIMIT]}"
+        else:
+            LAST_FETCH_ERRORS.pop(url, None)
         return exc.code, {}
     except Exception as exc:
         LAST_FETCH_ERRORS[url] = f"{type(exc).__name__}: {exc}"
@@ -271,7 +276,7 @@ def add_diagnostic_context(diagnostics: dict[str, str], key: str, context: str) 
 def collection_failure_message(label: str, status: int, url: str) -> str:
     message = f"{label}: {http_class(status)} {url}"
     error_message = LAST_FETCH_ERRORS.get(url)
-    if status == 0 and error_message:
+    if error_message:
         return f"{message}: {error_message}"
     return message
 
