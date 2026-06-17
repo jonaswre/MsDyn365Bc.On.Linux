@@ -315,6 +315,54 @@ class CollectContractTests(unittest.TestCase):
             result["csrf"],
         )
 
+    def test_collect_headers_records_fingerprint_headers_for_user_surfaces(self):
+        args = SimpleNamespace(
+            base_url="http://localhost:7046/BC",
+            management_api_url="http://localhost:7086/BC/managementApi/v1.0/companies",
+            soap_url="http://localhost:7047/BC/WS/Services",
+            web_client_url="http://localhost:7085/BC/",
+            dev_url="http://localhost:7049/BC/dev",
+            odata_url="http://localhost:7048/BC/ODataV4",
+            api_url="http://localhost:7052/BC/api/v2.0",
+            auth="admin:admin",
+        )
+        calls = []
+
+        def fake_fetch_status(url, auth=None, headers=None, timeout=15):
+            del headers, timeout
+            calls.append((url, auth))
+            return (
+                200,
+                {
+                    "Server": "Microsoft-HTTPAPI/2.0",
+                    "X-Powered-By": "ASP.NET",
+                    "Date": "volatile",
+                },
+            )
+
+        original_fetch_status = collect_contract.fetch_status
+        try:
+            collect_contract.fetch_status = fake_fetch_status
+            result = collect_contract.collect_headers(args, {})
+        finally:
+            collect_contract.fetch_status = original_fetch_status
+
+        self.assertEqual(
+            {
+                "httpClass": "2xx",
+                "server": "Microsoft-HTTPAPI/2.0",
+                "xPoweredBy": "ASP.NET",
+                "xAspNetVersion": "",
+                "xAspNetMvcVersion": "",
+                "fingerprintHeaderNames": ["server", "x-powered-by"],
+            },
+            result["apiCompanies"],
+        )
+        self.assertNotIn("Date", result["apiCompanies"])
+        self.assertIn(("http://localhost:7052/BC/api/v2.0/companies", "admin:admin"), calls)
+        self.assertIn(("http://localhost:7085/BC/", None), calls)
+        self.assertIn(("http://localhost:7085/BC/client/csrf", None), calls)
+
     def test_collect_company_records_company_counts_and_first_ids(self):
         args = SimpleNamespace(
             api_url="http://localhost:7052/BC/api/v2.0",

@@ -452,6 +452,67 @@ def web_client_csrf_probe(url: str, diagnostics: dict[str, str]) -> dict[str, An
     }
 
 
+def header_value(headers: dict[str, str], name: str) -> str:
+    values = [value.strip() for key, value in headers.items() if key.lower() == name]
+    return ", ".join(value for value in values if value)
+
+
+def header_fingerprint(headers: dict[str, str]) -> dict[str, Any]:
+    fingerprint_headers = {
+        "server": header_value(headers, "server"),
+        "xPoweredBy": header_value(headers, "x-powered-by"),
+        "xAspNetVersion": header_value(headers, "x-aspnet-version"),
+        "xAspNetMvcVersion": header_value(headers, "x-aspnetmvc-version"),
+    }
+    header_names = {
+        key.lower()
+        for key, value in headers.items()
+        if value.strip()
+        and key.lower()
+        in {
+            "server",
+            "x-powered-by",
+            "x-aspnet-version",
+            "x-aspnetmvc-version",
+        }
+    }
+    return {
+        **fingerprint_headers,
+        "fingerprintHeaderNames": sorted(header_names),
+    }
+
+
+def header_fingerprint_probe(
+    url: str, auth: str | None, diagnostics: dict[str, str], name: str
+) -> dict[str, Any]:
+    status, headers = fetch_status(url, auth)
+    record_zero_status(diagnostics, f"headers.{name}", url, status)
+    return {
+        "httpClass": http_class(status),
+        **header_fingerprint(headers),
+    }
+
+
+def collect_headers(args: argparse.Namespace, diagnostics: dict[str, str]) -> dict[str, dict[str, Any]]:
+    web_client_base_url = optional_url(args.web_client_url, join_url(args.base_url, "client/SignIn"))
+    endpoints: dict[str, tuple[str, str | None]] = {
+        "apiCompanies": (join_url(args.api_url, "companies"), args.auth),
+        "odataCompany": (join_url(args.odata_url, "Company"), args.auth),
+        "soapServices": (optional_url(args.soap_url, join_url(args.base_url, "WS/Services")), args.auth),
+        "devMetadata": (join_url(args.dev_url, "metadata"), args.auth),
+        "managementApiCompanies": (
+            optional_url(args.management_api_url, join_url(args.base_url, "managementApi/v1.0/companies")),
+            args.auth,
+        ),
+        "webClientRoot": (web_client_base_url, None),
+        "webClientCsrf": (join_url(web_client_base_url, "client/csrf"), None),
+    }
+    return {
+        name: header_fingerprint_probe(url, auth, diagnostics, name)
+        for name, (url, auth) in endpoints.items()
+    }
+
+
 def collect_web_client(args: argparse.Namespace, diagnostics: dict[str, str]) -> dict[str, Any]:
     web_client_base_url = optional_url(args.web_client_url, join_url(args.base_url, "client/SignIn"))
     return {
@@ -823,6 +884,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "surface": collect_surface(args, diagnostics),
         "auth": auth,
         "company": collect_company(args, diagnostics),
+        "headers": collect_headers(args, diagnostics),
         "webClient": collect_web_client(args, diagnostics),
         "integration": collect_integration(args, diagnostics, company_id),
         "dev": collect_dev(args, diagnostics),
