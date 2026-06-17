@@ -15,11 +15,31 @@ class ParityWorkflowTests(unittest.TestCase):
     def step_names(self):
         return [step.get("name") or step.get("uses") for step in self.linux_contract_job()["steps"]]
 
-    def test_linux_contract_uses_deps_only_startup_path(self):
+    def test_linux_contract_uses_selective_startup_path(self):
         env = self.linux_contract_job()["env"]
 
-        self.assertEqual("deps-only", env["BC_CLEAR_ALL_APPS"])
+        self.assertEqual("selective", env["BC_CLEAR_ALL_APPS"])
         self.assertEqual("false", env["BC_INCLUDE_TEST_TOOLKIT"])
+
+    def test_build_job_uploads_keep_app_ids_for_linux_startup(self):
+        steps = self.workflow()["jobs"]["build-smoke-app"]["steps"]
+        script = "\n".join(step.get("run", "") for step in steps)
+        upload = next(step for step in steps if step.get("uses") == "actions/upload-artifact@v4")
+
+        self.assertIn("scripts/resolve-keep-app-ids.py", script)
+        self.assertIn("--app-json extensions/smoke-test/app.json", script)
+        self.assertIn("--app-json extensions/TestRunnerExtension/app.json", script)
+        self.assertIn("--app-file \"patched-test-runner-$BC_VERSION.app\"", script)
+        self.assertIn("keep-app-ids-${{ matrix.bc_version }}.txt", upload["with"]["path"])
+
+    def test_linux_contract_loads_keep_app_ids_before_startup(self):
+        steps = self.linux_contract_job()["steps"]
+        start_index = self.step_names().index("Start Linux BC")
+        prior_scripts = "\n".join(step.get("run", "") for step in steps[:start_index])
+
+        self.assertIn("BC_KEEP_APP_IDS", prior_scripts)
+        self.assertIn("keep-app-ids-$BC_VERSION.txt", prior_scripts)
+        self.assertIn("$GITHUB_ENV", prior_scripts)
 
     def test_linux_contract_publishes_only_smoke_test_runner_dependency(self):
         script = Path("parity/collect-linux-contract.sh").read_text(encoding="utf-8")

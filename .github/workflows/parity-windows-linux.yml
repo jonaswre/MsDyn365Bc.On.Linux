@@ -113,12 +113,19 @@ jobs:
             --test-runner-app "$TEST_RUNNER_APP" \
             --package-cache extensions/smoke-test/.alpackages \
             --out "patched-test-runner-$BC_VERSION.app"
+          python3 scripts/resolve-keep-app-ids.py \
+            --artifact-dir "artifact-cache/$BC_VERSION" \
+            --app-json extensions/smoke-test/app.json \
+            --app-json extensions/TestRunnerExtension/app.json \
+            --app-file "patched-test-runner-$BC_VERSION.app" \
+            > "keep-app-ids-$BC_VERSION.txt"
       - uses: actions/upload-artifact@v4
         with:
           name: smoke-app-${{ matrix.bc_version }}
           path: |
             smoke-test-${{ matrix.bc_version }}.app
             patched-test-runner-${{ matrix.bc_version }}.app
+            keep-app-ids-${{ matrix.bc_version }}.txt
 
   linux-contract:
     needs: [prepare, build-smoke-app]
@@ -133,7 +140,7 @@ jobs:
       BC_TYPE: onprem
       BC_USERNAME: admin
       BC_PASSWORD: admin
-      BC_CLEAR_ALL_APPS: deps-only
+      BC_CLEAR_ALL_APPS: selective
       BC_INCLUDE_TEST_TOOLKIT: 'false'
       MSSQL_MEMORY_LIMIT_MB: 1024
       DOTNET_GCConserveMemory: 9
@@ -145,10 +152,20 @@ jobs:
         with:
           name: smoke-app-${{ matrix.bc_version }}
           path: build
+      - name: Load Linux keep app ids
+        run: |
+          KEEP_IDS=$(tr -d '\r\n' < "build/keep-app-ids-$BC_VERSION.txt")
+          if [ -z "$KEEP_IDS" ]; then
+            echo "Computed keep app id list is empty"
+            exit 1
+          fi
+          echo "BC_KEEP_APP_IDS=$KEEP_IDS" >> "$GITHUB_ENV"
+          echo "Computed $(printf '%s' "$KEEP_IDS" | tr ',' '\n' | wc -l) keep app id(s)"
       - name: Start Linux BC
         run: |
           free -h
           echo "BC_CLEAR_ALL_APPS=$BC_CLEAR_ALL_APPS"
+          echo "BC_KEEP_APP_IDS=$BC_KEEP_APP_IDS"
           echo "BC_INCLUDE_TEST_TOOLKIT=$BC_INCLUDE_TEST_TOOLKIT"
           docker compose up -d
           scripts/wait-for-bc-healthy.sh 30
