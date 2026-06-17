@@ -179,7 +179,10 @@ namespace Microsoft.AspNetCore.Hosting
         private static bool IsAuthorizedRequest(Microsoft.AspNetCore.Http.HttpContext context)
         {
             var path = context.Request.Path.Value?.TrimEnd('/') ?? string.Empty;
-            if (IsPublicWebClientCompatibilityPath(path))
+            var fullPath = FullRequestPath(context);
+            if (IsPublicWebClientCompatibilityPath(path)
+                || IsPublicWebClientCompatibilityPath(fullPath)
+                || IsWindowsPublicCompatibilityPath(context))
                 return true;
 
             if (!context.Request.Headers.TryGetValue("Authorization", out var values))
@@ -213,7 +216,10 @@ namespace Microsoft.AspNetCore.Hosting
 
         private static bool IsPublicWebClientCompatibilityPath(string path)
         {
-            return string.Equals(path, "/SignIn", StringComparison.OrdinalIgnoreCase)
+            return string.Equals(path, "", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(path, "/", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(path, "/BC", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(path, "/SignIn", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(path, "/BC/SignIn", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(path, "/BC/client/SignIn", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(path, "/csrf", StringComparison.OrdinalIgnoreCase)
@@ -222,11 +228,35 @@ namespace Microsoft.AspNetCore.Hosting
                 || string.Equals(path, "/BC/client", StringComparison.OrdinalIgnoreCase);
         }
 
+        private static bool IsWindowsPublicCompatibilityPath(Microsoft.AspNetCore.Http.HttpContext context)
+        {
+            var path = FullRequestPath(context);
+            // Windows exposes these surfaces without a Basic challenge; API/OData stay strict.
+            return string.Equals(path, "/BC/Management", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("/BC/Management/", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(path, "/BC/managementApi", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("/BC/managementApi/", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(path, "/BC/dev", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("/BC/dev/", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(path, "/BC/client/csh", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("/BC/client/csh/", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string FullRequestPath(Microsoft.AspNetCore.Http.HttpContext context)
+        {
+            var pathBase = context.Request.PathBase.Value?.TrimEnd('/') ?? string.Empty;
+            var path = context.Request.Path.Value?.TrimEnd('/') ?? string.Empty;
+            if (string.IsNullOrEmpty(pathBase))
+                return string.IsNullOrEmpty(path) ? "/" : path;
+            if (string.IsNullOrEmpty(path) || string.Equals(path, "/", StringComparison.Ordinal))
+                return pathBase;
+            return path.StartsWith("/", StringComparison.Ordinal) ? pathBase + path : pathBase + "/" + path;
+        }
+
         private static async System.Threading.Tasks.Task RejectUnauthorized(
             Microsoft.AspNetCore.Http.HttpContext context)
         {
             context.Response.StatusCode = 401;
-            context.Response.Headers["WWW-Authenticate"] = "Basic realm=\"Business Central\"";
             await context.Response.WriteAsync("Unauthorized");
         }
 
@@ -235,7 +265,10 @@ namespace Microsoft.AspNetCore.Hosting
             Func<System.Threading.Tasks.Task> nextMiddleware)
         {
             var path = context.Request.Path.Value?.TrimEnd('/') ?? string.Empty;
-            if (string.Equals(path, "/SignIn", StringComparison.OrdinalIgnoreCase)
+            if (string.Equals(path, "", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(path, "/", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(path, "/BC", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(path, "/SignIn", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(path, "/BC/SignIn", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(path, "/BC/client/SignIn", StringComparison.OrdinalIgnoreCase))
             {
