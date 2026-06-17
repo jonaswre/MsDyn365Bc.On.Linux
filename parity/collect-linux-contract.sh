@@ -52,7 +52,7 @@ python3 "$repo_dir/parity/collect_contract.py" \
   --management-url "http://localhost:7045/BC/Management" \
   --management-api-url "http://localhost:7086/BC/managementApi/v1.0/companies" \
   --soap-url "http://localhost:7047/BC/WS/Services" \
-  --web-client-url "http://localhost:7085/BC/client/SignIn" \
+  --web-client-url "http://localhost:7085/BC/" \
   --client-websocket-url "http://localhost:7085/BC/client/csh" \
   --dev-url "http://localhost:7049/BC/dev" \
   --odata-url "http://localhost:7048/BC/ODataV4" \

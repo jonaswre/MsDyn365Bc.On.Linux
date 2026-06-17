@@ -38,6 +38,12 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn("Permissions Mock", script)
         self.assertIn("UnPublish-BcContainerApp", script)
 
+    def test_windows_contract_maps_legacy_management_to_management_api(self):
+        script = Path("parity/collect-windows-contract.ps1").read_text(encoding="utf-8")
+
+        self.assertIn('"7045:7086"', script)
+        self.assertNotIn('"7045:7045"', script)
+
     def test_contract_collectors_pass_service_specific_surface_urls(self):
         linux = Path("parity/collect-linux-contract.sh").read_text(encoding="utf-8")
         windows = Path("parity/collect-windows-contract.ps1").read_text(encoding="utf-8")
@@ -48,6 +54,7 @@ class ParityWorkflowTests(unittest.TestCase):
             self.assertIn("--soap-url", script)
             self.assertIn("--web-client-url", script)
             self.assertIn("--client-websocket-url", script)
+            self.assertIn("http://localhost:7085/BC/", script)
 
     def test_linux_contract_uses_hosted_runner_memory_budget(self):
         env = self.linux_contract_job()["env"]

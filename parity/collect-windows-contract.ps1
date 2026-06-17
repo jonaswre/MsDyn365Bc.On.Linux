@@ -124,7 +124,7 @@ $credential = [pscredential]::new($Username, $securePassword)
 try {
     $artifactUrl = Get-BCArtifactUrl -Type OnPrem -Country w1 -Version $BcVersion
     $additionalParameters = @(
-        "--publish", "7045:7045",
+        "--publish", "7045:7086",
         "--publish", "7046:7046",
         "--publish", "7047:7047",
         "--publish", "7048:7048",
@@ -243,7 +243,7 @@ try {
         --management-url "http://localhost:7045/BC/Management" `
         --management-api-url "http://localhost:7086/BC/managementApi/v1.0/companies" `
         --soap-url "http://localhost:7047/BC/WS/Services" `
-        --web-client-url "http://localhost:7085/BC/client/SignIn" `
+        --web-client-url "http://localhost:7085/BC/" `
         --client-websocket-url "http://localhost:7085/BC/client/csh" `
         --dev-url "http://localhost:7049/BC/dev" `
         --odata-url "http://localhost:7048/BC/ODataV4" `

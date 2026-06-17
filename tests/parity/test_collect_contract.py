@@ -176,7 +176,7 @@ class CollectContractTests(unittest.TestCase):
             management_url="http://localhost:7045/BC/Management",
             management_api_url="http://localhost:7086/BC/managementApi/v1.0/companies",
             soap_url="http://localhost:7047/BC/WS/Services",
-            web_client_url="http://localhost:7085/BC/client/SignIn",
+            web_client_url="http://localhost:7085/BC/",
             client_websocket_url="http://localhost:7085/BC/client/csh",
             api_url="http://localhost:7052/BC/api/v2.0",
             odata_url="http://localhost:7048/BC/ODataV4",
@@ -208,7 +208,8 @@ class CollectContractTests(unittest.TestCase):
 
         self.assertEqual("http://localhost:7045/BC/Management", probed["management"])
         self.assertEqual("http://localhost:7047/BC/WS/Services", probed["soap"])
-        self.assertEqual("http://localhost:7085/BC/client/SignIn", probed["webClient"])
+        self.assertEqual("http://localhost:7085/BC/", probed["webClient"])
+        self.assertEqual("http://localhost:7085/BC/", probed["clientSignIn"])
         self.assertEqual("http://localhost:7085/BC/client/csh", probed["clientWebSocket"])
         self.assertEqual("http://localhost:7086/BC/managementApi/v1.0/companies", probed["managementApi"])
 
