@@ -332,6 +332,87 @@ class CollectContractTests(unittest.TestCase):
             result["soapServices"],
         )
 
+    def test_customer_crud_probe_creates_updates_deletes_and_verifies_cleanup(self):
+        args = SimpleNamespace(api_url="http://localhost:7052/BC/api/v2.0", auth="admin:admin", bc_version="28.1")
+        calls = []
+        deleted = False
+
+        def fake_request_json(method, url, auth, payload=None, headers=None, timeout=15):
+            nonlocal deleted
+            del auth, headers, timeout
+            calls.append((method, url, payload))
+            if method == "POST":
+                return 201, {"id": "customer-id", "displayName": payload["displayName"]}
+            if method == "PATCH":
+                return 200, {"id": "customer-id", "displayName": payload["displayName"]}
+            if method == "DELETE":
+                deleted = True
+                return 204, {}
+            raise AssertionError(f"unexpected request_json call: {method} {url}")
+
+        def fake_fetch_json(url, auth, timeout=15):
+            del auth, timeout
+            if deleted:
+                return 404, {}
+            if url.endswith("/customers(customer-id)"):
+                return 200, {"id": "customer-id", "displayName": "BC Parity 281"}
+            return 404, {}
+
+        original_request_json = collect_contract.request_json
+        original_fetch_json = collect_contract.fetch_json
+        try:
+            collect_contract.request_json = fake_request_json
+            collect_contract.fetch_json = fake_fetch_json
+            result = collect_contract.customer_crud_probe(args, {}, "company-id")
+        finally:
+            collect_contract.request_json = original_request_json
+            collect_contract.fetch_json = original_fetch_json
+
+        self.assertTrue(result["roundTripSucceeded"])
+        self.assertEqual("2xx", result["createHttpClass"])
+        self.assertEqual("2xx", result["readHttpClass"])
+        self.assertEqual("2xx", result["updateHttpClass"])
+        self.assertEqual("2xx", result["deleteHttpClass"])
+        self.assertEqual("4xx", result["readAfterDeleteHttpClass"])
+        self.assertTrue(result["createdIdPresent"])
+        self.assertTrue(result["updateEchoed"])
+        self.assertTrue(result["deleteVerified"])
+        self.assertEqual(["POST", "PATCH", "DELETE"], [call[0] for call in calls])
+
+    def test_customer_crud_probe_attempts_cleanup_after_update_failure(self):
+        args = SimpleNamespace(api_url="http://localhost:7052/BC/api/v2.0", auth="admin:admin", bc_version="27.5")
+        calls = []
+
+        def fake_request_json(method, url, auth, payload=None, headers=None, timeout=15):
+            del url, auth, payload, headers, timeout
+            calls.append(method)
+            if method == "POST":
+                return 201, {"id": "customer-id", "displayName": "BC Parity"}
+            if method == "PATCH":
+                return 500, {}
+            if method == "DELETE":
+                return 204, {}
+            raise AssertionError(f"unexpected request_json call: {method}")
+
+        def fake_fetch_json(url, auth, timeout=15):
+            del url, auth, timeout
+            return 200, {"id": "customer-id", "displayName": "BC Parity"}
+
+        original_request_json = collect_contract.request_json
+        original_fetch_json = collect_contract.fetch_json
+        try:
+            collect_contract.request_json = fake_request_json
+            collect_contract.fetch_json = fake_fetch_json
+            result = collect_contract.customer_crud_probe(args, {}, "company-id")
+        finally:
+            collect_contract.request_json = original_request_json
+            collect_contract.fetch_json = original_fetch_json
+
+        self.assertFalse(result["roundTripSucceeded"])
+        self.assertEqual("5xx", result["updateHttpClass"])
+        self.assertEqual("2xx", result["deleteHttpClass"])
+        self.assertEqual(["POST", "PATCH", "DELETE"], calls)
+
     def test_uppercase_id_is_treated_as_stable_item_id(self):
         self.assertTrue(collect_contract.item_id_present({"Id": "odata-company-id"}))
 

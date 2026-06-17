@@ -120,6 +120,46 @@ def fetch_json(url: str, auth: str, timeout: int = 15) -> tuple[int, dict]:
         return 0, {}
 
 
+def request_json(
+    method: str,
+    url: str,
+    auth: str,
+    payload: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: int = 15,
+) -> tuple[int, dict]:
+    request_headers = {
+        "Authorization": basic_header(auth),
+        "Accept": "application/json",
+    }
+    if payload is not None:
+        request_headers["Content-Type"] = "application/json"
+    request_headers.update(headers or {})
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = request.Request(url, data=body, headers=request_headers, method=method)
+    try:
+        with request.urlopen(req, timeout=timeout) as response:
+            raw_body = response.read().decode("utf-8", errors="replace").strip()
+            LAST_FETCH_ERRORS.pop(url, None)
+            return response.status, json.loads(raw_body) if raw_body else {}
+    except json.JSONDecodeError as exc:
+        LAST_FETCH_ERRORS[url] = f"{type(exc).__name__}: {exc}"
+        return 0, {}
+    except error.HTTPError as exc:
+        body_text = exc.read().decode("utf-8", errors="replace").strip()
+        if body_text:
+            LAST_FETCH_ERRORS[url] = f"HTTP {exc.code}: {body_text[:HTTP_ERROR_BODY_LIMIT]}"
+        else:
+            LAST_FETCH_ERRORS.pop(url, None)
+        try:
+            return exc.code, json.loads(body_text) if body_text else {}
+        except json.JSONDecodeError:
+            return exc.code, {}
+    except Exception as exc:
+        LAST_FETCH_ERRORS[url] = f"{type(exc).__name__}: {exc}"
+        return 0, {}
+
+
 def join_url(base_url: str, path: str) -> str:
     return base_url.rstrip("/") + "/" + path.lstrip("/")
 
@@ -491,11 +531,80 @@ def soap_services_probe(url: str, auth: str, diagnostics: dict[str, str]) -> dic
     }
 
 
-def collect_integration(args: argparse.Namespace, diagnostics: dict[str, str]) -> dict[str, Any]:
+def customer_crud_probe(args: argparse.Namespace, diagnostics: dict[str, str], company_id: Any | None) -> dict[str, Any]:
+    result = {
+        "roundTripSucceeded": False,
+        "createHttpClass": "000",
+        "readHttpClass": "000",
+        "updateHttpClass": "000",
+        "deleteHttpClass": "000",
+        "readAfterDeleteHttpClass": "000",
+        "createdIdPresent": False,
+        "readBackSucceeded": False,
+        "updateEchoed": False,
+        "deleteVerified": False,
+    }
+    if company_id is None:
+        diagnostics["integration.customerCrud"] = "customer CRUD skipped: company id unavailable"
+        return result
+
+    customers_url = join_url(args.api_url, f"{company_segment(company_id)}/customers")
+    version_token = "".join(part for part in str(args.bc_version) if part.isalnum()) or "unknown"
+    create_payload = {
+        "displayName": f"BC Parity Probe {version_token}",
+        "type": "Company",
+    }
+    create_status, create_payload_response = request_json("POST", customers_url, args.auth, create_payload)
+    record_zero_status(diagnostics, "integration.customerCrud.create", customers_url, create_status)
+    result["createHttpClass"] = http_class(create_status)
+
+    customer_id = str(create_payload_response.get("id", "")).strip()
+    result["createdIdPresent"] = bool(customer_id)
+    if not customer_id:
+        return result
+
+    customer_url = join_url(args.api_url, f"{company_segment(company_id)}/customers({parse.quote(customer_id, safe='')})")
+    read_status, read_payload = fetch_json(customer_url, args.auth)
+    record_zero_status(diagnostics, "integration.customerCrud.read", customer_url, read_status)
+    result["readHttpClass"] = http_class(read_status)
+    result["readBackSucceeded"] = 200 <= read_status <= 299 and str(read_payload.get("id", "")).strip() == customer_id
+
+    updated_name = f"BC Parity Probe {version_token} Updated"
+    update_status, update_payload = request_json(
+        "PATCH",
+        customer_url,
+        args.auth,
+        {"displayName": updated_name},
+        headers={"If-Match": "*"},
+    )
+    record_zero_status(diagnostics, "integration.customerCrud.update", customer_url, update_status)
+    result["updateHttpClass"] = http_class(update_status)
+    result["updateEchoed"] = 200 <= update_status <= 299 and update_payload.get("displayName") == updated_name
+
+    delete_status, _ = request_json("DELETE", customer_url, args.auth, headers={"If-Match": "*"})
+    record_zero_status(diagnostics, "integration.customerCrud.delete", customer_url, delete_status)
+    result["deleteHttpClass"] = http_class(delete_status)
+
+    read_after_delete_status, _ = fetch_json(customer_url, args.auth)
+    record_zero_status(diagnostics, "integration.customerCrud.readAfterDelete", customer_url, read_after_delete_status)
+    result["readAfterDeleteHttpClass"] = http_class(read_after_delete_status)
+    result["deleteVerified"] = 400 <= read_after_delete_status <= 499
+    result["roundTripSucceeded"] = (
+        200 <= create_status <= 299
+        and result["readBackSucceeded"]
+        and result["updateEchoed"]
+        and 200 <= delete_status <= 299
+        and result["deleteVerified"]
+    )
+    return result
+
+
+def collect_integration(args: argparse.Namespace, diagnostics: dict[str, str], company_id: Any | None = None) -> dict[str, Any]:
     return {
         "apiCompanies": collection_probe(join_url(args.api_url, "companies"), args.auth, diagnostics, "apiCompanies"),
         "odataCompany": collection_probe(join_url(args.odata_url, "Company"), args.auth, diagnostics, "odataCompany"),
         "soapServices": soap_services_probe(optional_url(args.soap_url, join_url(args.base_url, "WS/Services")), args.auth, diagnostics),
+        "apiCustomerCrud": customer_crud_probe(args, diagnostics, company_id),
     }
 
 
@@ -653,7 +762,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "surface": collect_surface(args, diagnostics),
         "auth": auth,
         "company": collect_company(args, diagnostics),
-        "integration": collect_integration(args, diagnostics),
+        "integration": collect_integration(args, diagnostics, company_id),
         "dev": collect_dev(args, diagnostics),
         "tests": collect_tests(args.test_output, args.runner_kind, diagnostics),
         "apps": collect_apps(args, diagnostics, company_id),
