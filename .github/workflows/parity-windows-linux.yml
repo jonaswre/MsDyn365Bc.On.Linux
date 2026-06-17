@@ -191,7 +191,7 @@ jobs:
       BC_TYPE: onprem
       BC_USERNAME: admin
       BC_PASSWORD: admin
-      BC_CLEAR_ALL_APPS: selective
+      BC_CLEAR_ALL_APPS: 'false'
       BC_INCLUDE_TEST_TOOLKIT: 'false'
       BC_MEMORY_LIMIT: 12G
       MSSQL_MEMORY_LIMIT_MB: 1024

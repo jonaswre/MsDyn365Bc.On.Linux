@@ -15,10 +15,10 @@ class ParityWorkflowTests(unittest.TestCase):
     def step_names(self):
         return [step.get("name") or step.get("uses") for step in self.linux_contract_job()["steps"]]
 
-    def test_linux_contract_uses_selective_startup_path(self):
+    def test_linux_contract_uses_full_stock_app_footprint(self):
         env = self.linux_contract_job()["env"]
 
-        self.assertEqual("selective", env["BC_CLEAR_ALL_APPS"])
+        self.assertEqual("false", env["BC_CLEAR_ALL_APPS"])
         self.assertEqual("false", env["BC_INCLUDE_TEST_TOOLKIT"])
 
     def test_linux_contract_uses_hosted_runner_memory_budget(self):
@@ -67,6 +67,11 @@ class ParityWorkflowTests(unittest.TestCase):
         script = collect["run"]
 
         self.assertIn("build/test-runner-extension-$BC_VERSION.app", script)
+
+    def test_linux_entrypoint_does_not_seed_visible_service_user(self):
+        script = Path("scripts/entrypoint.sh").read_text(encoding="utf-8")
+
+        self.assertNotIn("YOURBC-SERVICEUSER", script)
 
     def test_linux_contract_loads_keep_app_ids_before_startup(self):
         steps = self.linux_contract_job()["steps"]
