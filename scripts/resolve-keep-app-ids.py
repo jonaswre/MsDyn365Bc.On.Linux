@@ -135,7 +135,13 @@ def read_app_info(app_path: str) -> dict | None:
                                 deps = inner.get("dependencies", [])
                         except Exception:
                             pass
-                return {"id": app_id, "dependencies": deps, "path": app_path}
+                return {
+                    "id": app_id,
+                    "application": manifest.get("Application") or manifest.get("ApplicationVersion") or "",
+                    "platform": manifest.get("Platform") or manifest.get("PlatformVersion") or "",
+                    "dependencies": deps,
+                    "path": app_path,
+                }
 
             if "NavxManifest.xml" in names:
                 xml = z.read("NavxManifest.xml").decode("utf-8", errors="replace")
@@ -149,7 +155,13 @@ def read_app_info(app_path: str) -> dict | None:
                     dep_id = (_xml_attr(dep_xml, "AppId") or _xml_attr(dep_xml, "Id") or "")
                     if dep_id:
                         deps.append({"id": dep_id.lower()})
-                return {"id": app_id, "dependencies": deps, "path": app_path}
+                return {
+                    "id": app_id,
+                    "application": _xml_attr(xml, "Application") or "",
+                    "platform": _xml_attr(xml, "Platform") or "",
+                    "dependencies": deps,
+                    "path": app_path,
+                }
 
             if "app.json" in names:
                 data = json.loads(z.read("app.json").decode("utf-8-sig"))
@@ -160,6 +172,8 @@ def read_app_info(app_path: str) -> dict | None:
                         deps.append({"id": dep_id})
                 return {
                     "id": (data.get("id") or "").lower(),
+                    "application": data.get("application") or "",
+                    "platform": data.get("platform") or "",
                     "dependencies": deps,
                     "path": app_path,
                 }
@@ -229,6 +243,10 @@ def read_consumer_seeds(app_json_paths, app_file_paths) -> set[str]:
     for p in app_file_paths:
         info = read_app_info(p)
         if info:
+            if info.get("platform"):
+                seeds |= PLATFORM_IDS
+            if info.get("application"):
+                seeds |= APPLICATION_IDS
             for dep in info.get("dependencies", []):
                 seeds.add(dep["id"])
     return seeds

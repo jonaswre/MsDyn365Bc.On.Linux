@@ -31,6 +31,7 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn("--app-json extensions/TestRunnerExtension/app.json", script)
         self.assertIn("--app-file \"patched-test-runner-$BC_VERSION.app\"", script)
         self.assertIn("--app-file \"test-runner-extension-$BC_VERSION.app\"", script)
+        self.assertIn("ids.discard(test_runner_id)", script)
         self.assertIn("keep-app-ids-${{ matrix.bc_version }}.txt", upload["with"]["path"])
 
     def test_build_job_uploads_version_matched_test_runner_extension(self):

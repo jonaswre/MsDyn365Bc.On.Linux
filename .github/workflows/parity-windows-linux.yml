@@ -154,6 +154,19 @@ jobs:
             --app-file "patched-test-runner-$BC_VERSION.app" \
             --app-file "test-runner-extension-$BC_VERSION.app" \
             > "keep-app-ids-$BC_VERSION.txt"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          # Do not preserve the stock Microsoft Test Runner. The Linux
+          # contract publishes a patched Test Runner that grants the custom
+          # runner extension access to Microsoft test internals.
+          path = Path(f"keep-app-ids-{os.environ['BC_VERSION']}.txt")
+          test_runner_id = "23de40a6-dfe8-4f80-80db-d70f83ce8caf"
+          ids = {item.strip().lower() for item in path.read_text().split(",") if item.strip()}
+          ids.discard(test_runner_id)
+          path.write_text(",".join(sorted(ids)) + "\n")
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: smoke-app-${{ matrix.bc_version }}
