@@ -66,6 +66,25 @@ class CollectContractTests(unittest.TestCase):
         self.assertEqual([normalize_extension(extensions[0])], custom_apps)
         self.assertTrue(test_framework_present)
 
+    def test_extension_normalization_uses_stable_app_identity(self):
+        extension = {
+            "publisher": "Microsoft",
+            "displayName": "Application",
+            "appId": "stable-app-id",
+            "packageId": "environment-package-id",
+            "appVersion": "27.5.0.0",
+        }
+
+        self.assertEqual(
+            {
+                "publisher": "Microsoft",
+                "name": "Application",
+                "id": "stable-app-id",
+                "version": "27.5.0.0",
+            },
+            normalize_extension(extension),
+        )
+
     def test_test_framework_any_signal_requires_exact_app_name(self):
         _, _, company_hub_present = split_apps([{"publisher": "Microsoft", "name": "Company Hub"}])
         _, _, any_present = split_apps([{"publisher": "Microsoft", "name": " Any "}])

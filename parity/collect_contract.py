@@ -191,8 +191,8 @@ def company_segment(company_id: Any) -> str:
 def normalize_extension(item: dict[str, Any]) -> dict[str, str]:
     return {
         "publisher": str(item.get("publisher", "")),
-        "name": str(item.get("name", "")),
-        "id": str(item.get("packageId") or item.get("id") or item.get("appId") or ""),
+        "name": str(item.get("displayName") or item.get("name") or ""),
+        "id": str(item.get("appId") or item.get("id") or item.get("packageId") or ""),
         "version": str(item.get("version") or item.get("appVersion") or item.get("packageVersion") or ""),
     }
 
