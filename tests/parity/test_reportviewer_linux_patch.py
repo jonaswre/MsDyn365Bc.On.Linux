@@ -22,6 +22,8 @@ class ReportViewerLinuxPatchTests(unittest.TestCase):
 
         self.assertIn("src/tools/PatchReportViewerLinux", dockerfile)
         self.assertIn("/build/output/tools/reportviewer", dockerfile)
+        self.assertIn("grpc.core/2.46.6", dockerfile)
+        self.assertIn("/bc/native/libgrpc_csharp_ext.x64.so", dockerfile)
 
     def test_entrypoint_applies_reportviewer_patcher_before_startup(self):
         entrypoint = Path("scripts/entrypoint.sh").read_text(encoding="utf-8")
@@ -43,6 +45,7 @@ class ReportViewerLinuxPatchTests(unittest.TestCase):
         entrypoint = Path("scripts/entrypoint.sh").read_text(encoding="utf-8")
 
         self.assertIn("SideServices/libgrpc_csharp_ext.x64.so", entrypoint)
+        self.assertIn("/bc/native/libgrpc_csharp_ext.x64.so", entrypoint)
         self.assertIn("$SERVICE_DIR/libgrpc_csharp_ext.x64.so", entrypoint)
         self.assertIn("Copied gRPC native extension for reporting client", entrypoint)
 

@@ -390,11 +390,17 @@ if [ -f /bc/tools/reportviewer/PatchReportViewerLinux.dll ] && [ -f "$SERVICE_DI
 fi
 
 # The BC service tier loads Microsoft.BusinessCentral.Reporting.Client.dll from
-# $SERVICE_DIR, so Grpc.Core probes for its native Linux extension there. The
-# artifact ships the Linux native extension under SideServices; expose it at the
-# root as well so the in-process reporting client can create its channel.
-if [ -f "$SERVICE_DIR/SideServices/libgrpc_csharp_ext.x64.so" ] && [ ! -f "$SERVICE_DIR/libgrpc_csharp_ext.x64.so" ]; then
-    cp "$SERVICE_DIR/SideServices/libgrpc_csharp_ext.x64.so" "$SERVICE_DIR/libgrpc_csharp_ext.x64.so"
+# $SERVICE_DIR, so Grpc.Core probes for its native Linux extension there. Some
+# artifacts do not ship the Linux native extension; the image carries the
+# Grpc.Core 2.46.6 native library that matches BC 27.x.
+GRPC_NATIVE_SOURCE=""
+if [ -f "$SERVICE_DIR/SideServices/libgrpc_csharp_ext.x64.so" ]; then
+    GRPC_NATIVE_SOURCE="$SERVICE_DIR/SideServices/libgrpc_csharp_ext.x64.so"
+elif [ -f "/bc/native/libgrpc_csharp_ext.x64.so" ]; then
+    GRPC_NATIVE_SOURCE="/bc/native/libgrpc_csharp_ext.x64.so"
+fi
+if [ -n "$GRPC_NATIVE_SOURCE" ] && [ ! -f "$SERVICE_DIR/libgrpc_csharp_ext.x64.so" ]; then
+    cp "$GRPC_NATIVE_SOURCE" "$SERVICE_DIR/libgrpc_csharp_ext.x64.so"
     log_step "Copied gRPC native extension for reporting client"
 fi
 

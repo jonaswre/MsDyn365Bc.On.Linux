@@ -39,10 +39,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     mkdir -p /root/.wine/drive_c/windows/Fonts && \
     cp /usr/share/fonts/truetype/dejavu/*.ttf /root/.wine/drive_c/windows/Fonts/ && \
     cp /usr/share/fonts/truetype/liberation/*.ttf /root/.wine/drive_c/windows/Fonts/ && \
+    mkdir -p /bc/native && \
+    curl -fsSL -o /tmp/grpc.core.2.46.6.nupkg https://api.nuget.org/v3-flatcontainer/grpc.core/2.46.6/grpc.core.2.46.6.nupkg && \
+    unzip -p /tmp/grpc.core.2.46.6.nupkg runtimes/linux-x64/native/libgrpc_csharp_ext.x64.so > /bc/native/libgrpc_csharp_ext.x64.so && \
+    chmod 755 /bc/native/libgrpc_csharp_ext.x64.so && \
     fc-cache -f && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /bc/hook /bc/patched /bc/refasm /bc/addins-overlay /bc/testrunner /bc/service /bc/artifacts /bc/scripts /bc/tools /bc/reporting
+RUN mkdir -p /bc/hook /bc/patched /bc/refasm /bc/addins-overlay /bc/testrunner /bc/service /bc/artifacts /bc/scripts /bc/tools /bc/reporting /bc/native
 
 # Copy built artifacts from builder
 COPY --from=builder /build/output/hook/ /bc/hook/
