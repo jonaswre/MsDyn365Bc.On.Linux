@@ -57,6 +57,9 @@ class HttpSysStubCompatibilityTests(unittest.TestCase):
         self.assertIn("IsLegacyPublicClientWebSocketCompatibilityVersion()", sign_in_shim)
         self.assertIn("RejectUnauthorized", sign_in_shim)
         self.assertIn("HandleClientServicesWebSocket", sign_in_shim)
+        self.assertIn("if (IsClientServicesPath(path))", sign_in_shim)
+        self.assertIn("if (context.WebSockets.IsWebSocketRequest)", sign_in_shim)
+        self.assertIn("WriteWindowsCompatibleWebClientError(context)", sign_in_shim)
         self.assertIn('NonEmptyEnvironment("BC_VERSION", "latest")', self.source())
         self.assertIn("BC 28", self.source())
 

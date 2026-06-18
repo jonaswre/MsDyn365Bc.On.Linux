@@ -336,7 +336,7 @@ namespace Microsoft.AspNetCore.Hosting
                 context.Request.Headers["Authorization"] = BasicAuthorizationHeader();
             }
 
-            if (IsClientServicesPath(path) && context.WebSockets.IsWebSocketRequest)
+            if (IsClientServicesPath(path))
             {
                 if (!IsLegacyPublicClientWebSocketCompatibilityVersion()
                     && !IsAuthorizedRequest(context))
@@ -345,7 +345,13 @@ namespace Microsoft.AspNetCore.Hosting
                     return;
                 }
 
-                await HandleClientServicesWebSocket(context);
+                if (context.WebSockets.IsWebSocketRequest)
+                {
+                    await HandleClientServicesWebSocket(context);
+                    return;
+                }
+
+                await WriteWindowsCompatibleWebClientError(context);
                 return;
             }
 
