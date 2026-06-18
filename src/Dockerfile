@@ -58,9 +58,9 @@ COPY --from=builder /build/output/DrawingStub.dll /bc/addins-overlay/System.Draw
 COPY scripts/ /bc/scripts/
 RUN chmod +x /bc/scripts/*.sh
 
-# Copy Linux/Wine reporting sidecar source. It is compiled after BC artifacts are
-# downloaded because it references version-matched Microsoft reporting assemblies.
-COPY src/reporting/LinuxReportingService.cs /bc/reporting/LinuxReportingService.cs
+# Copy reporting bridge source. It is compiled after BC artifacts are downloaded
+# because it references version-matched Microsoft reporting assemblies.
+COPY src/reporting/LinuxReportingService.cs /bc/reporting/ReportingServiceBridge.cs
 
 # Copy test runner extension (REST API for test execution)
 COPY extensions/TestRunnerExtension/MicrosoftTestRunnerPatched.app /bc/testrunner/MicrosoftTestRunnerPatched.app

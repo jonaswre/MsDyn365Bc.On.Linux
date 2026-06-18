@@ -409,13 +409,13 @@ if [ -n "$GRPC_NATIVE_SOURCE" ] && [ ! -f "$SERVICE_DIR/libgrpc_csharp_ext.x64.s
     log_step "Copied gRPC native extension for reporting client"
 fi
 
-BC_ENABLE_WINE_REPORTING="${BC_ENABLE_WINE_REPORTING:-true}"
+BC_ENABLE_REPORTING_BRIDGE="${BC_ENABLE_REPORTING_BRIDGE:-${BC_ENABLE_WINE_REPORTING:-true}}"
 BC_REPORTING_GRPC_PORT="${BC_REPORTING_GRPC_PORT:-17778}"
-export BC_ENABLE_WINE_REPORTING BC_REPORTING_GRPC_PORT
+export BC_ENABLE_REPORTING_BRIDGE BC_REPORTING_GRPC_PORT
 
-if [ "$BC_ENABLE_WINE_REPORTING" = "true" ] && [ -f /bc/reporting/LinuxReportingService.cs ]; then
-    REPORTING_EXE="$SERVICE_DIR/SideServices/LinuxReportingService.exe"
-    REPORTING_LOG="/tmp/linux-reporting-service.log"
+if [ "$BC_ENABLE_REPORTING_BRIDGE" = "true" ] && [ -f /bc/reporting/ReportingServiceBridge.cs ]; then
+    REPORTING_EXE="$SERVICE_DIR/SideServices/ReportingServiceBridge.exe"
+    REPORTING_LOG="/tmp/reporting-service-bridge.log"
     log_step "Compiling reporting service bridge..."
     (
         cd "$SERVICE_DIR/SideServices"
@@ -433,7 +433,7 @@ if [ "$BC_ENABLE_WINE_REPORTING" = "true" ] && [ -f /bc/reporting/LinuxReporting
             -r:Newtonsoft.Json.dll \
             -r:System.Drawing \
             -r:System.Xml \
-            /bc/reporting/LinuxReportingService.cs
+            /bc/reporting/ReportingServiceBridge.cs
     )
     cp /usr/share/fonts/truetype/dejavu/*.ttf /root/.wine/drive_c/windows/Fonts/ 2>/dev/null || true
     cp /usr/share/fonts/truetype/liberation/*.ttf /root/.wine/drive_c/windows/Fonts/ 2>/dev/null || true

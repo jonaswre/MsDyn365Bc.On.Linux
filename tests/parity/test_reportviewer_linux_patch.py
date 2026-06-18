@@ -38,13 +38,17 @@ class ReportViewerLinuxPatchTests(unittest.TestCase):
     def test_entrypoint_compiles_and_starts_linux_reporting_sidecar(self):
         entrypoint = Path("scripts/entrypoint.sh").read_text(encoding="utf-8")
 
-        self.assertIn("BC_ENABLE_WINE_REPORTING", entrypoint)
-        self.assertIn("LinuxReportingService.exe", entrypoint)
+        self.assertIn("BC_ENABLE_REPORTING_BRIDGE", entrypoint)
+        self.assertIn("BC_ENABLE_WINE_REPORTING:-true", entrypoint)
+        self.assertIn("ReportingServiceBridge.exe", entrypoint)
         self.assertIn("mcs -langversion:latest", entrypoint)
         self.assertIn("wine \"$REPORTING_EXE\" \"$BC_REPORTING_GRPC_PORT\"", entrypoint)
-        self.assertIn("/tmp/linux-reporting-service.log", entrypoint)
+        self.assertIn("/tmp/reporting-service-bridge.log", entrypoint)
+        self.assertIn("/bc/reporting/ReportingServiceBridge.cs", entrypoint)
         self.assertIn("Compiling reporting service bridge", entrypoint)
         self.assertIn("Started reporting service bridge", entrypoint)
+        self.assertNotIn("LinuxReportingService.exe", entrypoint)
+        self.assertNotIn("/tmp/linux-reporting-service.log", entrypoint)
         self.assertNotIn("Compiling Linux reporting sidecar", entrypoint)
         self.assertNotIn("Started Linux reporting sidecar", entrypoint)
 
@@ -65,6 +69,7 @@ class ReportViewerLinuxPatchTests(unittest.TestCase):
         self.assertIn("LocalReportHandle", source)
         self.assertIn("DataSet_Result", source)
         self.assertIn("RenderWithoutDiagnostics", source)
+        self.assertIn("public sealed class ReportingServiceBridge", source)
         self.assertIn("Server-side printing is not available in this container", source)
         self.assertNotIn("not supported by the Linux reporting sidecar", source)
         self.assertNotIn("Linux reporting sidecar listening", source)
@@ -88,6 +93,8 @@ class ReportViewerLinuxPatchTests(unittest.TestCase):
             "Linux reporting sidecar",
             "Wine reporting sidecar",
             "not supported by the Linux reporting sidecar",
+            "LinuxReportingService.exe",
+            "/tmp/linux-reporting-service.log",
         ):
             self.assertNotIn(forbidden, string_literals)
 

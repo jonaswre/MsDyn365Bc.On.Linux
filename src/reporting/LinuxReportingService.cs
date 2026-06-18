@@ -15,7 +15,7 @@ using Microsoft.Dynamics.Nav.Types.Report.Runtime;
 using Microsoft.Reporting.WebForms;
 using Newtonsoft.Json;
 
-public sealed class LinuxReportingService : ReportingService.ReportingServiceBase
+public sealed class ReportingServiceBridge : ReportingService.ReportingServiceBase
 {
     private ReportingServiceSettings settings = new ReportingServiceSettings
     {
@@ -341,7 +341,7 @@ public static class Program
         int port = args.Length > 0 ? int.Parse(args[0]) : 17778;
         var server = new Server
         {
-            Services = { ReportingService.BindService(new LinuxReportingService()) },
+            Services = { ReportingService.BindService(new ReportingServiceBridge()) },
             Ports = { new ServerPort("localhost", port, ServerCredentials.Insecure) }
         };
         server.Start();

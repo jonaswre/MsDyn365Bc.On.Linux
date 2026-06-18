@@ -252,7 +252,7 @@ internal class StartupHook
             //   When test code triggers RDLC rendering, BC tries to connect to the
             //   Reporting Service via gRPC, times out, and crashes the test codeunit.
             //   NavEnvironment has a built-in hook: CustomReportingServiceClient.
-            //   In full reporting mode, point it at the Wine-backed Linux sidecar.
+            //   In full reporting mode, point it at the reporting bridge.
             //   Otherwise, keep the no-op client used by parity discovery workflows.
             PatchReportingServiceClient(args.LoadedAssembly);
         }
@@ -1180,9 +1180,11 @@ internal class StartupHook
             return;
         }
 
-        bool wineReportingEnabled = IsTruthy(Environment.GetEnvironmentVariable("BC_ENABLE_WINE_REPORTING"));
-        _reportingClient = wineReportingEnabled
-            ? CreateWineReportingClient(clientAsm, baseDir)
+        bool reportingBridgeEnabled = IsTruthy(
+            Environment.GetEnvironmentVariable("BC_ENABLE_REPORTING_BRIDGE")
+            ?? Environment.GetEnvironmentVariable("BC_ENABLE_WINE_REPORTING"));
+        _reportingClient = reportingBridgeEnabled
+            ? CreateReportingBridgeClient(clientAsm, baseDir)
             : typeof(System.Reflection.DispatchProxy)
                 .GetMethod("Create", 2, Type.EmptyTypes)!
                 .MakeGenericMethod(iClientType, typeof(NoOpReportingProxy))
@@ -1208,12 +1210,12 @@ internal class StartupHook
         }
 
         _reportingClientPatched = true;
-        Log(wineReportingEnabled
+        Log(reportingBridgeEnabled
             ? "[StartupHook] Patch #19: CustomReportingServiceClient -> reporting service bridge"
             : "[StartupHook] Patch #19: CustomReportingServiceClient → no-op proxy");
     }
 
-    private static object CreateWineReportingClient(Assembly clientAsm, string baseDir)
+    private static object CreateReportingBridgeClient(Assembly clientAsm, string baseDir)
     {
         string commonDll = Path.Combine(baseDir, "Microsoft.BusinessCentral.Reporting.Common.dll");
         if (!File.Exists(commonDll))
