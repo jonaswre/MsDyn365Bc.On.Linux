@@ -75,6 +75,16 @@ class HttpSysStubCompatibilityTests(unittest.TestCase):
         self.assertIn("CorrelationId", unauthorized)
         self.assertNotIn('WriteAsync("Unauthorized")', unauthorized)
 
+    def test_web_client_unknown_routes_match_windows_html_error_shape(self):
+        sign_in_shim = self.method_body("WebClientSignInCompatibility")
+        web_client_error = self.method_body("WriteWindowsCompatibleWebClientError")
+
+        self.assertIn("WriteWindowsCompatibleWebClientError", sign_in_shim)
+        self.assertIn("StatusCodes.Status404NotFound", web_client_error)
+        self.assertIn('"text/html; charset=utf-8"', web_client_error)
+        self.assertIn("<!DOCTYPE html>", web_client_error)
+        self.assertIn("Something went wrong", web_client_error)
+
 
 if __name__ == "__main__":
     unittest.main()

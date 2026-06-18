@@ -342,7 +342,8 @@ namespace Microsoft.AspNetCore.Hosting
                 return;
             }
 
-            await nextMiddleware();
+            await WriteWindowsCompatibleWebClientError(context);
+            return;
         }
 
         private static async System.Threading.Tasks.Task WriteWindowsCompatibleCsrfError(
@@ -351,6 +352,15 @@ namespace Microsoft.AspNetCore.Hosting
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             context.Response.ContentType = "text/html; charset=utf-8";
             await context.Response.WriteAsync("<error code=\"BadRequest\"/>");
+        }
+
+        private static async System.Threading.Tasks.Task WriteWindowsCompatibleWebClientError(
+            Microsoft.AspNetCore.Http.HttpContext context)
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            context.Response.ContentType = "text/html; charset=utf-8";
+            await context.Response.WriteAsync(
+                "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"utf-8\" /> <title>Something went wrong</title> <style> body { background-color: #FAFAFA; color: #636363; display: flex; flex-direction: row; align-items: center; justify-content: center; }</style></head><body><main>Something went wrong</main></body></html>");
         }
 
         private static bool IsClientServicesPath(string path)
