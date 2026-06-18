@@ -48,6 +48,8 @@ class ParityWorkflowTests(unittest.TestCase):
         script = Path("parity/collect-windows-contract.ps1").read_text(encoding="utf-8")
 
         self.assertIn("Invoke-WithRetry", script)
+        self.assertIn("${Attempts}:", script)
+        self.assertNotIn("$Attempts:", script)
         self.assertIn("User-Agent", script)
         self.assertIn("BcContainerHelper.nupkg", script)
 

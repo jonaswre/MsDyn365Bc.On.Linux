@@ -51,7 +51,7 @@ function Invoke-WithRetry([string]$Description, [scriptblock]$Action, [int]$Atte
             }
 
             $delay = [Math]::Min(30, [Math]::Pow(2, $attempt))
-            Write-Warning "$Description failed on attempt $attempt/$Attempts: $($_.Exception.Message). Retrying in $delay seconds."
+            Write-Warning "$Description failed on attempt $attempt/${Attempts}: $($_.Exception.Message). Retrying in $delay seconds."
             Start-Sleep -Seconds $delay
         }
     }
