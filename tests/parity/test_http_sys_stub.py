@@ -51,8 +51,12 @@ class HttpSysStubCompatibilityTests(unittest.TestCase):
 
     def test_client_websocket_public_compatibility_is_version_gated(self):
         body = self.method_body("IsWindowsPublicCompatibilityPath")
+        sign_in_shim = self.method_body("WebClientSignInCompatibility")
 
         self.assertIn("IsLegacyPublicClientWebSocketCompatibilityVersion()", body)
+        self.assertIn("IsLegacyPublicClientWebSocketCompatibilityVersion()", sign_in_shim)
+        self.assertIn("RejectUnauthorized", sign_in_shim)
+        self.assertIn("HandleClientServicesWebSocket", sign_in_shim)
         self.assertIn('NonEmptyEnvironment("BC_VERSION", "latest")', self.source())
         self.assertIn("BC 28", self.source())
 

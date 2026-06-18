@@ -338,6 +338,13 @@ namespace Microsoft.AspNetCore.Hosting
 
             if (IsClientServicesPath(path) && context.WebSockets.IsWebSocketRequest)
             {
+                if (!IsLegacyPublicClientWebSocketCompatibilityVersion()
+                    && !IsAuthorizedRequest(context))
+                {
+                    await RejectUnauthorized(context);
+                    return;
+                }
+
                 await HandleClientServicesWebSocket(context);
                 return;
             }
