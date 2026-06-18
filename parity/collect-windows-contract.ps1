@@ -10,6 +10,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $contractsDir = Split-Path -Parent $OutJson
+$expectedTests = 7
 if (-not $contractsDir) {
     $contractsDir = "."
 }
@@ -42,7 +43,7 @@ function Invoke-NativeChecked([string]$CapabilityCode, [string[]]$Command) {
 
 function Write-FailedTestSummary([string]$TestLog, [string]$Message) {
     "Test codeunits: 70000,70001,70003" | Set-Content -Path $TestLog
-    "total=5 passed=0 failed=5 skipped=0" | Add-Content -Path $TestLog
+    "total=$expectedTests passed=0 failed=$expectedTests skipped=0" | Add-Content -Path $TestLog
     if ($Message) {
         $Message | Add-Content -Path $TestLog
     }
@@ -186,9 +187,9 @@ try {
         if (-not $allPassed) {
             $testStatus = 1
             "Run-TestsInBcContainer returned false" | Add-Content -Path $testLog
-        } elseif ($summary.Total -ne 5) {
+        } elseif ($summary.Total -ne $expectedTests) {
             $testStatus = 1
-            "Expected 5 tests in XUnit result, found $($summary.Total): $xunitPath" | Add-Content -Path $testLog
+            "Expected $expectedTests tests in XUnit result, found $($summary.Total): $xunitPath" | Add-Content -Path $testLog
         } elseif ($summary.Failed -ne 0) {
             $testStatus = 1
             "XUnit result reported $($summary.Failed) failed tests" | Add-Content -Path $testLog

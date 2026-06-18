@@ -7,6 +7,23 @@ codeunit 70003 "BC Container Report Smoke Test"
 
     [Test]
     procedure TestCustomerListPdfExport()
+    begin
+        AssertCustomerListExport(ReportFormat::Pdf, 'PDF');
+    end;
+
+    [Test]
+    procedure TestCustomerListWordExport()
+    begin
+        AssertCustomerListExport(ReportFormat::Word, 'Word');
+    end;
+
+    [Test]
+    procedure TestCustomerListExcelExport()
+    begin
+        AssertCustomerListExport(ReportFormat::Excel, 'Excel');
+    end;
+
+    local procedure AssertCustomerListExport(Format: ReportFormat; FormatLabel: Text)
     var
         Customer: Record Customer;
         TempBlob: Codeunit "Temp Blob";
@@ -20,13 +37,13 @@ codeunit 70003 "BC Container Report Smoke Test"
         RecRef.GetTable(Customer);
         TempBlob.CreateOutStream(OutStream);
 
-        if not Report.SaveAs(Report::"Customer - List", '', ReportFormat::Pdf, OutStream, RecRef) then
-            Error('Customer list PDF export failed');
+        if not Report.SaveAs(Report::"Customer - List", '', Format, OutStream, RecRef) then
+            Error('Customer list %1 export failed', FormatLabel);
 
         if not TempBlob.HasValue() then
-            Error('Customer list PDF export returned no content');
+            Error('Customer list %1 export returned no content', FormatLabel);
 
         if TempBlob.Length() < 100 then
-            Error('Customer list PDF export too small: %1 bytes', TempBlob.Length());
+            Error('Customer list %1 export too small: %2 bytes', FormatLabel, TempBlob.Length());
     end;
 }

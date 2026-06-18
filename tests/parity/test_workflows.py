@@ -32,6 +32,22 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn("-includeTestRunnerOnly", script)
         self.assertNotIn("-includeTestToolkit", script)
 
+    def test_report_smoke_tests_cover_primary_export_formats(self):
+        source = Path("extensions/smoke-test/src/SmokeReportTest.Codeunit.al").read_text(encoding="utf-8")
+
+        self.assertIn("TestCustomerListPdfExport", source)
+        self.assertIn("ReportFormat::Pdf", source)
+        self.assertIn("TestCustomerListWordExport", source)
+        self.assertIn("ReportFormat::Word", source)
+        self.assertIn("TestCustomerListExcelExport", source)
+        self.assertIn("ReportFormat::Excel", source)
+
+    def test_windows_contract_expects_all_smoke_tests(self):
+        script = Path("parity/collect-windows-contract.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("$expectedTests = 7", script)
+        self.assertIn("$summary.Total -ne $expectedTests", script)
+
     def test_windows_contract_removes_permissions_mock_before_collection(self):
         script = Path("parity/collect-windows-contract.ps1").read_text(encoding="utf-8")
 
