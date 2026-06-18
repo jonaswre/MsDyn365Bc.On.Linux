@@ -66,7 +66,9 @@ jobs:
           PKG="microsoft.dynamics.businesscentral.development.tools.linux"
           EXTRACT_DIR="$HOME/.al-tool-cache/$AL_TOOL"
           mkdir -p "$EXTRACT_DIR"
-          curl -fsSL "https://api.nuget.org/v3-flatcontainer/${PKG}/${AL_TOOL}/${PKG}.${AL_TOOL}.nupkg" -o "$EXTRACT_DIR/pkg.zip"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --continue-at - \
+            "https://api.nuget.org/v3-flatcontainer/${PKG}/${AL_TOOL}/${PKG}.${AL_TOOL}.nupkg" \
+            -o "$EXTRACT_DIR/pkg.zip"
           unzip -q -o "$EXTRACT_DIR/pkg.zip" -d "$EXTRACT_DIR"
           rm "$EXTRACT_DIR/pkg.zip"
           AL_TOOL_DIR=$(find "$EXTRACT_DIR" -type f -name alc -printf '%h\n' | sort | tail -1)

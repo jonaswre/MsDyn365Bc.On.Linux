@@ -158,6 +158,14 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/build-patched-test-runner.sh", script)
         self.assertIn("patched-test-runner-$BC_VERSION.app", script)
 
+    def test_build_job_retries_al_compiler_download(self):
+        steps = self.workflow()["jobs"]["build-smoke-app"]["steps"]
+        script = "\n".join(step.get("run", "") for step in steps)
+
+        self.assertIn("--retry 5", script)
+        self.assertIn("--retry-all-errors", script)
+        self.assertIn("--continue-at -", script)
+
     def test_compare_waits_for_both_contract_jobs_to_succeed(self):
         compare = self.workflow()["jobs"]["compare-contracts"]
 
