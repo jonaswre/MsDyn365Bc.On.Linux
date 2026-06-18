@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import re
 import socket
 import sys
 import xml.etree.ElementTree as ET
@@ -17,6 +18,7 @@ RUNNER_KINDS = ("websocket", "bccontainerhelper", "startup-debug")
 HTTP_ERROR_BODY_LIMIT = 800
 HTTP_TEXT_BODY_LIMIT = 65536
 ERROR_BODY_EXCERPT_LIMIT = 240
+GUID_PATTERN = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
 CI_HARNESS_APPS = {
     ("ALDirectCompile", "Test Runner Extension", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
 }
@@ -615,7 +617,9 @@ def collect_auth(args: argparse.Namespace, diagnostics: dict[str, str]) -> dict[
 def normalized_body_excerpt(status: int, body: str) -> str:
     if not 400 <= status <= 599:
         return ""
-    return " ".join(body.split())[:ERROR_BODY_EXCERPT_LIMIT]
+    text = " ".join(body.split())
+    text = GUID_PATTERN.sub("<GUID>", text)
+    return text[:ERROR_BODY_EXCERPT_LIMIT]
 
 
 def auth_invalid_response_probe(url: str, invalid_auth: str, diagnostics: dict[str, str], name: str) -> dict[str, Any]:

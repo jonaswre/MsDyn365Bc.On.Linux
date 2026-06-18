@@ -282,8 +282,17 @@ namespace Microsoft.AspNetCore.Hosting
         private static async System.Threading.Tasks.Task RejectUnauthorized(
             Microsoft.AspNetCore.Http.HttpContext context)
         {
-            context.Response.StatusCode = 401;
-            await context.Response.WriteAsync("Unauthorized");
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            context.Response.ContentType = "application/json; charset=utf-8";
+            var body = JsonSerializer.Serialize(new
+            {
+                error = new
+                {
+                    code = "Authentication_InvalidCredentials",
+                    message = $"The server has rejected the client credentials. CorrelationId: {Guid.NewGuid()}."
+                }
+            });
+            await context.Response.WriteAsync(body);
         }
 
         private static async System.Threading.Tasks.Task WebClientSignInCompatibility(

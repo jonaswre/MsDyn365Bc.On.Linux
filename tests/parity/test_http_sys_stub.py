@@ -66,6 +66,15 @@ class HttpSysStubCompatibilityTests(unittest.TestCase):
         self.assertIn("OnStarting", server_header)
         self.assertIn('"Microsoft-HTTPAPI/2.0"', server_header)
 
+    def test_invalid_credentials_match_windows_json_error_shape(self):
+        unauthorized = self.method_body("RejectUnauthorized")
+
+        self.assertIn("StatusCodes.Status401Unauthorized", unauthorized)
+        self.assertIn('"application/json; charset=utf-8"', unauthorized)
+        self.assertIn("Authentication_InvalidCredentials", unauthorized)
+        self.assertIn("CorrelationId", unauthorized)
+        self.assertNotIn('WriteAsync("Unauthorized")', unauthorized)
+
 
 if __name__ == "__main__":
     unittest.main()

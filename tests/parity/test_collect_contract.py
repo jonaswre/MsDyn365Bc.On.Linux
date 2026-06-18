@@ -11,6 +11,7 @@ from parity.collect_contract import (
     is_super_permission,
     normalize_company_name,
     normalize_extension,
+    normalized_body_excerpt,
     parse_dev_api_major,
     split_apps,
     summarize_test_output,
@@ -27,6 +28,19 @@ class CollectContractTests(unittest.TestCase):
         self.assertEqual("4xx", http_class(401))
         self.assertEqual("5xx", http_class(503))
         self.assertEqual("000", http_class(0))
+
+    def test_error_body_excerpt_masks_correlation_ids(self):
+        body = (
+            '{"error":{"code":"Authentication_InvalidCredentials",'
+            '"message":"The server has rejected the client credentials. '
+            'CorrelationId: e00ece05-5bc4-474e-95eb-c7a85b82a29e."}}'
+        )
+
+        self.assertEqual(
+            '{"error":{"code":"Authentication_InvalidCredentials","message":"The server has rejected the client credentials. CorrelationId: <GUID>."}}',
+            normalized_body_excerpt(401, body),
+        )
+        self.assertEqual("", normalized_body_excerpt(200, body))
 
     def test_company_name_strips_whitespace(self):
         self.assertEqual("CRONUS International Ltd.", normalize_company_name("  CRONUS International Ltd.  "))
