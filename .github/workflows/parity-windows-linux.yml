@@ -259,6 +259,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
     env:
       BC_VERSION: ${{ matrix.bc_version }}
@@ -268,6 +269,10 @@ jobs:
         with:
           name: smoke-app-${{ matrix.bc_version }}
           path: build
+      - uses: actions/cache@v4
+        with:
+          path: ~\Documents\PowerShell\Modules\BcContainerHelper
+          key: windows-bccontainerhelper-${{ runner.os }}-v1
       - name: Collect Windows contract
         shell: pwsh
         run: |

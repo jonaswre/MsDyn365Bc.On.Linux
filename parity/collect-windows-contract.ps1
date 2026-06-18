@@ -41,6 +41,61 @@ function Invoke-NativeChecked([string]$CapabilityCode, [string[]]$Command) {
     }
 }
 
+function Invoke-WithRetry([string]$Description, [scriptblock]$Action, [int]$Attempts = 4) {
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            return & $Action
+        } catch {
+            if ($attempt -ge $Attempts) {
+                throw
+            }
+
+            $delay = [Math]::Min(30, [Math]::Pow(2, $attempt))
+            Write-Warning "$Description failed on attempt $attempt/$Attempts: $($_.Exception.Message). Retrying in $delay seconds."
+            Start-Sleep -Seconds $delay
+        }
+    }
+}
+
+function Install-BcContainerHelperModule {
+    $availableModule = Get-Module -ListAvailable -Name BcContainerHelper |
+        Sort-Object Version -Descending |
+        Select-Object -First 1
+    if ($null -ne $availableModule) {
+        Import-Module BcContainerHelper -Force
+        return
+    }
+
+    try {
+        Invoke-WithRetry "Install NuGet package provider" {
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser -ErrorAction Stop | Out-Null
+        }
+        Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+        Invoke-WithRetry "Install BcContainerHelper from PSGallery" {
+            Install-Module BcContainerHelper -Force -AllowClobber -Scope CurrentUser -Repository PSGallery -ErrorAction Stop
+        }
+    } catch {
+        Write-Warning "Install-Module failed: $($_.Exception.Message). Falling back to direct package download."
+        $moduleRoot = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "PowerShell\Modules\BcContainerHelper"
+        $packagePath = Join-Path $env:RUNNER_TEMP "BcContainerHelper.nupkg"
+        $extractPath = Join-Path $env:RUNNER_TEMP "BcContainerHelper"
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $moduleRoot, $extractPath, $packagePath
+        New-Item -ItemType Directory -Force -Path $moduleRoot | Out-Null
+        Invoke-WithRetry "Download BcContainerHelper.nupkg" {
+            Invoke-WebRequest `
+                -Uri "https://www.powershellgallery.com/api/v2/package/BcContainerHelper" `
+                -Headers @{ "User-Agent" = "MsDyn365Bc.On.Linux parity workflow" } `
+                -MaximumRedirection 5 `
+                -OutFile $packagePath `
+                -ErrorAction Stop
+        }
+        Expand-Archive -Path $packagePath -DestinationPath $extractPath -Force
+        Copy-Item -Path (Join-Path $extractPath "*") -Destination $moduleRoot -Recurse -Force
+    }
+
+    Import-Module BcContainerHelper -Force
+}
+
 function Write-FailedTestSummary([string]$TestLog, [string]$Message) {
     "Test codeunits: 70000,70001,70003" | Set-Content -Path $TestLog
     "total=$expectedTests passed=0 failed=$expectedTests skipped=0" | Add-Content -Path $TestLog
@@ -97,23 +152,7 @@ try {
 }
 
 try {
-    try {
-        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
-        Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-        Install-Module BcContainerHelper -Force -AllowClobber -Scope CurrentUser -Repository PSGallery
-    } catch {
-        $moduleRoot = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "PowerShell\Modules\BcContainerHelper"
-        $packagePath = Join-Path $env:RUNNER_TEMP "BcContainerHelper.nupkg"
-        $extractPath = Join-Path $env:RUNNER_TEMP "BcContainerHelper"
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $moduleRoot, $extractPath, $packagePath
-        New-Item -ItemType Directory -Force -Path $moduleRoot | Out-Null
-        Invoke-WebRequest `
-            -Uri "https://www.powershellgallery.com/api/v2/package/BcContainerHelper" `
-            -OutFile $packagePath
-        Expand-Archive -Path $packagePath -DestinationPath $extractPath -Force
-        Copy-Item -Path (Join-Path $extractPath "*") -Destination $moduleRoot -Recurse -Force
-    }
-    Import-Module BcContainerHelper -Force
+    Install-BcContainerHelperModule
     Get-Module BcContainerHelper | Format-List Name,Version | Out-Host
 } catch {
     Fail-Capability "BC_CONTAINER_HELPER_UNAVAILABLE" $_.Exception.Message

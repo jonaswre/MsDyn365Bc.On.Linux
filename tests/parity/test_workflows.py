@@ -32,6 +32,25 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn("-includeTestRunnerOnly", script)
         self.assertNotIn("-includeTestToolkit", script)
 
+    def test_windows_contract_serializes_gallery_dependent_jobs(self):
+        job = self.workflow()["jobs"]["windows-contract"]
+
+        self.assertEqual(1, job["strategy"]["max-parallel"])
+
+    def test_windows_contract_caches_bccontainerhelper_module(self):
+        steps = self.workflow()["jobs"]["windows-contract"]["steps"]
+        cache = next(step for step in steps if step.get("uses") == "actions/cache@v4")
+
+        self.assertIn("PowerShell\\Modules\\BcContainerHelper", cache["with"]["path"])
+        self.assertIn("bccontainerhelper", cache["with"]["key"].lower())
+
+    def test_windows_contract_retries_bccontainerhelper_download(self):
+        script = Path("parity/collect-windows-contract.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("Invoke-WithRetry", script)
+        self.assertIn("User-Agent", script)
+        self.assertIn("BcContainerHelper.nupkg", script)
+
     def test_report_smoke_tests_cover_primary_export_formats(self):
         source = Path("extensions/smoke-test/src/SmokeReportTest.Codeunit.al").read_text(encoding="utf-8")
 
