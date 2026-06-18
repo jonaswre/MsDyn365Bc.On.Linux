@@ -534,6 +534,62 @@ class CollectContractTests(unittest.TestCase):
             result["soapServices"],
         )
 
+    def test_collect_metadata_records_api_and_odata_discoverability_shape(self):
+        args = SimpleNamespace(
+            api_url="http://localhost:7052/BC/api/v2.0",
+            odata_url="http://localhost:7048/BC/ODataV4",
+            auth="admin:admin",
+        )
+        calls = []
+
+        def fake_fetch_text(url, auth, headers=None, timeout=15):
+            del headers, timeout
+            calls.append((url, auth))
+            if url == "http://localhost:7052/BC/api/v2.0/$metadata":
+                return (
+                    200,
+                    {"Content-Type": "application/xml"},
+                    '<edmx:Edmx xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx"><edmx:DataServices><Schema>'
+                    '<EntityContainer Name="api"><EntitySet Name="companies"/>'
+                    '<EntitySet Name="customers"/></EntityContainer>'
+                    "</Schema></edmx:DataServices></edmx:Edmx>",
+                )
+            self.assertEqual("http://localhost:7048/BC/ODataV4/$metadata", url)
+            return (
+                200,
+                {"Content-Type": "application/xml"},
+                '<edmx:Edmx xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx"><edmx:DataServices><Schema>'
+                '<EntityContainer Name="odata"><EntitySet Name="Company"/>'
+                '<EntitySet Name="Customer"/></EntityContainer>'
+                "</Schema></edmx:DataServices></edmx:Edmx>",
+            )
+
+        original_fetch_text = collect_contract.fetch_text
+        try:
+            collect_contract.fetch_text = fake_fetch_text
+            result = collect_contract.collect_metadata(args, {})
+        finally:
+            collect_contract.fetch_text = original_fetch_text
+
+        self.assertEqual(
+            {
+                "httpClass": "2xx",
+                "readSucceeded": True,
+                "contentTypeClass": "xml",
+                "payloadClass": "xml",
+                "xmlRoot": "Edmx",
+                "hasEdmx": True,
+                "hasEntityContainer": True,
+                "hasCompany": True,
+                "hasCustomer": True,
+            },
+            result["api"],
+        )
+        self.assertTrue(result["odata"]["hasEdmx"])
+        self.assertTrue(result["odata"]["hasEntityContainer"])
+        self.assertIn(("http://localhost:7052/BC/api/v2.0/$metadata", "admin:admin"), calls)
+        self.assertIn(("http://localhost:7048/BC/ODataV4/$metadata", "admin:admin"), calls)
+
     def test_customer_crud_probe_creates_updates_deletes_and_verifies_cleanup(self):
         args = SimpleNamespace(api_url="http://localhost:7052/BC/api/v2.0", auth="admin:admin", bc_version="28.1")
         calls = []

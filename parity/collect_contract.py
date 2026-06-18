@@ -729,6 +729,35 @@ def soap_services_probe(url: str, auth: str, diagnostics: dict[str, str]) -> dic
     }
 
 
+def metadata_text_signature(body: str) -> dict[str, bool]:
+    text = body.lower()
+    return {
+        "hasEdmx": "edmx:" in text or "<edmx" in text,
+        "hasEntityContainer": "entitycontainer" in text,
+        "hasCompany": "company" in text or "companies" in text,
+        "hasCustomer": "customer" in text or "customers" in text,
+    }
+
+
+def metadata_probe(url: str, auth: str, diagnostics: dict[str, str], name: str) -> dict[str, Any]:
+    status, headers, body = fetch_text(url, auth)
+    record_zero_status(diagnostics, f"metadata.{name}", url, status)
+    return {
+        "httpClass": http_class(status),
+        "readSucceeded": 200 <= status <= 299,
+        "contentTypeClass": content_type_class(headers),
+        **payload_signature(body),
+        **metadata_text_signature(body),
+    }
+
+
+def collect_metadata(args: argparse.Namespace, diagnostics: dict[str, str]) -> dict[str, dict[str, Any]]:
+    return {
+        "api": metadata_probe(join_url(args.api_url, "$metadata"), args.auth, diagnostics, "api"),
+        "odata": metadata_probe(join_url(args.odata_url, "$metadata"), args.auth, diagnostics, "odata"),
+    }
+
+
 def customer_crud_probe(args: argparse.Namespace, diagnostics: dict[str, str], company_id: Any | None) -> dict[str, Any]:
     result = {
         "roundTripSucceeded": False,
@@ -964,6 +993,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "missingRoutes": collect_missing_routes(args, diagnostics),
         "webClient": collect_web_client(args, diagnostics),
         "integration": collect_integration(args, diagnostics, company_id),
+        "metadata": collect_metadata(args, diagnostics),
         "dev": collect_dev(args, diagnostics),
         "tests": collect_tests(args.test_output, args.runner_kind, diagnostics),
         "apps": collect_apps(args, diagnostics, company_id),
