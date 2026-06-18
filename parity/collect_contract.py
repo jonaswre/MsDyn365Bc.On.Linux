@@ -16,6 +16,7 @@ LAST_FETCH_ERRORS: dict[str, str] = {}
 RUNNER_KINDS = ("websocket", "bccontainerhelper", "startup-debug")
 HTTP_ERROR_BODY_LIMIT = 800
 HTTP_TEXT_BODY_LIMIT = 65536
+ERROR_BODY_EXCERPT_LIMIT = 240
 CI_HARNESS_APPS = {
     ("ALDirectCompile", "Test Runner Extension", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
 }
@@ -221,6 +222,10 @@ def auth_scheme_class(headers: dict[str, str]) -> str:
     if "userpassword" in value or "navuserpassword" in value:
         return "userpassword"
     return "unknown"
+
+
+def has_header(headers: dict[str, str], name: str) -> bool:
+    return any(key.lower() == name for key in headers)
 
 
 def extract_items(payload: Any) -> list[dict[str, Any]]:
@@ -603,6 +608,35 @@ def collect_auth(args: argparse.Namespace, diagnostics: dict[str, str]) -> dict[
         "invalidCredentialsRejected": all(detail["invalidRejected"] for detail in endpoint_details.values()),
         "authSchemeClass": auth_scheme,
         "endpoints": endpoint_details,
+        "invalidResponses": collect_auth_invalid_responses(args, diagnostics),
+    }
+
+
+def normalized_body_excerpt(status: int, body: str) -> str:
+    if not 400 <= status <= 599:
+        return ""
+    return " ".join(body.split())[:ERROR_BODY_EXCERPT_LIMIT]
+
+
+def auth_invalid_response_probe(url: str, invalid_auth: str, diagnostics: dict[str, str], name: str) -> dict[str, Any]:
+    status, headers, body = fetch_text(url, invalid_auth)
+    record_zero_status(diagnostics, f"auth.invalidResponses.{name}", url, status)
+    signature = payload_signature(body)
+    return {
+        "httpClass": http_class(status),
+        "contentTypeClass": content_type_class(headers),
+        "payloadClass": signature["payloadClass"],
+        "xmlRoot": signature["xmlRoot"],
+        "authSchemeClass": auth_scheme_class(headers),
+        "challengePresent": has_header(headers, "www-authenticate"),
+        "bodyExcerpt": normalized_body_excerpt(status, body),
+    }
+
+
+def collect_auth_invalid_responses(args: argparse.Namespace, diagnostics: dict[str, str]) -> dict[str, dict[str, Any]]:
+    return {
+        name: auth_invalid_response_probe(url, args.invalid_auth, diagnostics, name)
+        for name, url in auth_endpoints(args).items()
     }
 
 

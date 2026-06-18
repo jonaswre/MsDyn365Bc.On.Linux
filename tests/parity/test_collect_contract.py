@@ -147,18 +147,44 @@ class CollectContractTests(unittest.TestCase):
                 return 403, {}
             return 401, {}
 
+        def fake_fetch_text(url, auth=None, headers=None, timeout=15):
+            del headers, timeout
+            self.assertEqual(args.invalid_auth, auth)
+            if url.endswith("/companies"):
+                return 401, {"WWW-Authenticate": 'Basic realm="BC"', "Content-Type": "application/json"}, '{"error":"Denied"}'
+            if url.endswith("/Company"):
+                return 403, {"Content-Type": "text/plain"}, "Forbidden"
+            return 200, {"Content-Type": "application/json"}, '{"supportedVersions":[]}'
+
         original_fetch_status = collect_contract.fetch_status
+        original_fetch_text = collect_contract.fetch_text
         try:
             collect_contract.fetch_status = fake_fetch_status
+            collect_contract.fetch_text = fake_fetch_text
             result = collect_contract.collect_auth(args, {})
         finally:
             collect_contract.fetch_status = original_fetch_status
+            collect_contract.fetch_text = original_fetch_text
 
         self.assertFalse(result["validCredentialsAccepted"])
         self.assertTrue(result["invalidCredentialsRejected"])
         self.assertEqual("basic", result["authSchemeClass"])
         self.assertEqual({"api", "odata", "dev"}, set(result["endpoints"]))
         self.assertEqual("5xx", result["endpoints"]["dev"]["validHttpClass"])
+        self.assertEqual(
+            {
+                "httpClass": "4xx",
+                "contentTypeClass": "json",
+                "payloadClass": "json",
+                "xmlRoot": "",
+                "authSchemeClass": "basic",
+                "challengePresent": True,
+                "bodyExcerpt": '{"error":"Denied"}',
+            },
+            result["invalidResponses"]["api"],
+        )
+        self.assertEqual("Forbidden", result["invalidResponses"]["odata"]["bodyExcerpt"])
+        self.assertEqual("", result["invalidResponses"]["dev"]["bodyExcerpt"])
 
     def test_collect_surface_includes_web_client(self):
         args = SimpleNamespace(
