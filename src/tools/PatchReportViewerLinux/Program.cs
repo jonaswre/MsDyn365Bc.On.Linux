@@ -65,7 +65,7 @@ if (replaceInput)
     File.Move(writePath, inputPath, overwrite: true);
 }
 
-Console.WriteLine($"Patched ReportViewer Linux/Wine rendering paths in {outputPath}");
+Console.WriteLine($"Patched ReportViewer rendering compatibility paths in {outputPath}");
 return 0;
 
 static bool PatchCallbackWrapper(ModuleDefinition module, TypeDefinition type, string methodName)

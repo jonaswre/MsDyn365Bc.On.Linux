@@ -384,8 +384,13 @@ fi
 # semantics: impersonation, expression-host cleanup, and GDI+ generic font
 # fallback behavior under Wine.
 if [ -f /bc/tools/reportviewer/PatchReportViewerLinux.dll ] && [ -f "$SERVICE_DIR/SideServices/Microsoft.ReportViewer.Common.dll" ]; then
-    if dotnet /bc/tools/reportviewer/PatchReportViewerLinux.dll "$SERVICE_DIR/SideServices/Microsoft.ReportViewer.Common.dll" 2>&1 | tail -1; then
-        log_step "Patched ReportViewer.Common.dll (Linux/Wine report rendering)"
+    REPORTVIEWER_PATCH_LOG="/tmp/reportviewer-patch.log"
+    if dotnet /bc/tools/reportviewer/PatchReportViewerLinux.dll "$SERVICE_DIR/SideServices/Microsoft.ReportViewer.Common.dll" > "$REPORTVIEWER_PATCH_LOG" 2>&1; then
+        log_step "Patched ReportViewer.Common.dll (report rendering compatibility)"
+    else
+        log_step "ReportViewer.Common.dll compatibility patch failed"
+        tail -80 "$REPORTVIEWER_PATCH_LOG" || true
+        exit 1
     fi
 fi
 
@@ -411,7 +416,7 @@ export BC_ENABLE_WINE_REPORTING BC_REPORTING_GRPC_PORT
 if [ "$BC_ENABLE_WINE_REPORTING" = "true" ] && [ -f /bc/reporting/LinuxReportingService.cs ]; then
     REPORTING_EXE="$SERVICE_DIR/SideServices/LinuxReportingService.exe"
     REPORTING_LOG="/tmp/linux-reporting-service.log"
-    log_step "Compiling Linux reporting sidecar..."
+    log_step "Compiling reporting service bridge..."
     (
         cd "$SERVICE_DIR/SideServices"
         mcs -langversion:latest -target:exe -out:"$REPORTING_EXE" \
@@ -437,11 +442,11 @@ if [ "$BC_ENABLE_WINE_REPORTING" = "true" ] && [ -f /bc/reporting/LinuxReporting
     REPORTING_PID=$!
     sleep 2
     if ! kill -0 "$REPORTING_PID" 2>/dev/null; then
-        log_step "Linux reporting sidecar failed to start"
+        log_step "Reporting service bridge failed to start"
         tail -80 "$REPORTING_LOG" || true
         exit 1
     fi
-    log_step "Started Linux reporting sidecar on gRPC port $BC_REPORTING_GRPC_PORT"
+    log_step "Started reporting service bridge on gRPC port $BC_REPORTING_GRPC_PORT"
 fi
 
 # Fix Add-Ins directory case (Linux is case-sensitive, BC expects "Add-Ins")

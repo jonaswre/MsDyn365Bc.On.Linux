@@ -345,7 +345,7 @@ public static class Program
             Ports = { new ServerPort("localhost", port, ServerCredentials.Insecure) }
         };
         server.Start();
-        Console.WriteLine("Linux reporting sidecar listening on " + port);
+        Console.WriteLine("Reporting service bridge listening on " + port);
         Task.Delay(Timeout.Infinite).Wait();
     }
 

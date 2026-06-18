@@ -92,9 +92,24 @@ internal class StartupHook
         bool disabled = _disabledPatches.Contains(name.ToLowerInvariant());
         if (disabled)
         {
-            Console.Error.WriteLine($"[StartupHook] DIAGNOSTIC: patch '{name}' SKIPPED (BC_DISABLE_PATCHES)");
+            LogError($"[StartupHook] DIAGNOSTIC: patch '{name}' SKIPPED (BC_DISABLE_PATCHES)");
         }
         return disabled;
+    }
+
+    private static bool VerbosePatchLogging =>
+        IsTruthy(Environment.GetEnvironmentVariable("BC_VERBOSE_COMPATIBILITY_PATCHES"));
+
+    private static void Log(string message)
+    {
+        if (VerbosePatchLogging)
+            Console.WriteLine(message);
+    }
+
+    private static void LogError(string message)
+    {
+        if (VerbosePatchLogging)
+            Console.Error.WriteLine(message);
     }
 
     private static bool _patchedLanguage;
@@ -114,7 +129,7 @@ internal class StartupHook
         AppContext.SetSwitch("System.Drawing.EnableUnixSupport", true);
 
 
-        Console.WriteLine("[StartupHook] Initializing Linux compatibility patches...");
+        Log("[StartupHook] Initializing compatibility patches...");
 
         // Patch #13 (early): Prevent Watson crash on unobserved task exceptions.
         // Watson's SendReport → GetRegistryValue crashes on Linux (NullRef, no registry).
@@ -122,7 +137,7 @@ internal class StartupHook
         // Strategy: aggressively strip BC's handler every second, and keep our safe handler.
         EventHandler<UnobservedTaskExceptionEventArgs> safeHandler = (sender, args) =>
         {
-            Console.WriteLine($"[StartupHook] Caught unobserved task exception: {args.Exception?.InnerException?.GetType().Name}: {args.Exception?.InnerException?.Message}");
+            Log($"[StartupHook] Caught unobserved task exception: {args.Exception?.InnerException?.GetType().Name}: {args.Exception?.InnerException?.Message}");
             args.SetObserved();
         };
         TaskScheduler.UnobservedTaskException += safeHandler;
@@ -151,7 +166,7 @@ internal class StartupHook
                         {
                             // Replace entire event with just our safe handler
                             field.SetValue(null, _safeHandlerRef);
-                            Console.WriteLine($"[StartupHook] Removed {invocationList.Length - 1} Watson crash handler(s)");
+                            Log($"[StartupHook] Removed {invocationList.Length - 1} Watson crash handler(s)");
                         }
                     }
                 }
@@ -185,29 +200,29 @@ internal class StartupHook
         // Patch #18: No-op SetupSideServices — must be patched before Main() calls it.
         try
         {
-            Console.WriteLine("[StartupHook] Patch #18: Searching for DynamicsNavServer...");
+            Log("[StartupHook] Patch #18: Searching for DynamicsNavServer...");
             var serverType = Type.GetType("Microsoft.Dynamics.Nav.WindowsServices.DynamicsNavServer, Microsoft.Dynamics.Nav.Server");
             if (serverType != null)
             {
-                Console.WriteLine("[StartupHook] Patch #18: Found DynamicsNavServer via Type.GetType");
+                Log("[StartupHook] Patch #18: Found DynamicsNavServer via Type.GetType");
                 PatchSetupSideServices(serverType.Assembly);
             }
             else
             {
                 // Try scanning loaded assemblies
-                Console.WriteLine("[StartupHook] Patch #18: Type.GetType returned null, scanning loaded assemblies...");
+                Log("[StartupHook] Patch #18: Type.GetType returned null, scanning loaded assemblies...");
                 foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
                 {
-                    Console.WriteLine($"[StartupHook] Patch #18:   Loaded: {asm.GetName().Name}");
+                    Log($"[StartupHook] Patch #18:   Loaded: {asm.GetName().Name}");
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Patch #18 search error: {ex.GetType().Name}: {ex.Message}");
+            Log($"[StartupHook] Patch #18 search error: {ex.GetType().Name}: {ex.Message}");
         }
 
-        Console.WriteLine("[StartupHook] Initialization complete.");
+        Log("[StartupHook] Initialization complete.");
     }
 
     private static void OnAssemblyLoad(object? sender, AssemblyLoadEventArgs args)
@@ -216,13 +231,13 @@ internal class StartupHook
 
         if (!_patchedLanguage && name == "Microsoft.Dynamics.Nav.Language")
         {
-            Console.WriteLine("[StartupHook] Nav.Language.dll loaded — patching");
+            Log("[StartupHook] Nav.Language.dll loaded — patching");
             PatchCustomTranslationResolver(args.LoadedAssembly);
         }
 
         if (!_patchedNcl && name == "Microsoft.Dynamics.Nav.Ncl")
         {
-            Console.WriteLine("[StartupHook] Nav.Ncl.dll loaded — patching");
+            Log("[StartupHook] Nav.Ncl.dll loaded — patching");
             PatchNavEnvironment(args.LoadedAssembly);
         }
 
@@ -324,7 +339,7 @@ internal class StartupHook
 
         if (!_patchedTypes && name == "Microsoft.Dynamics.Nav.Types")
         {
-            Console.WriteLine("[StartupHook] Nav.Types.dll loaded — patching");
+            Log("[StartupHook] Nav.Types.dll loaded — patching");
             PatchNavTypes(args.LoadedAssembly);
         }
 
@@ -387,19 +402,19 @@ internal class StartupHook
         string path = System.IO.Path.Combine(baseDir, fileName);
         if (!System.IO.File.Exists(path))
         {
-            Console.WriteLine($"[StartupHook] {displayName} not found at base dir — will patch on load");
+            Log($"[StartupHook] {displayName} not found at base dir — will patch on load");
             return;
         }
 
         try
         {
             Assembly asm = Assembly.LoadFrom(path);
-            Console.WriteLine($"[StartupHook] Eagerly loaded {displayName}");
+            Log($"[StartupHook] Eagerly loaded {displayName}");
             patchAction(asm);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Eager load {displayName} failed: {ex.GetType().Name}: {ex.Message}");
+            Log($"[StartupHook] Eager load {displayName} failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -422,13 +437,13 @@ internal class StartupHook
             var stubPath = Path.Combine(hookDir, "libwin32_stubs.so");
             if (!File.Exists(stubPath))
             {
-                Console.WriteLine($"[StartupHook] libwin32_stubs.so not found at {hookDir}");
-                Console.WriteLine("[StartupHook] Build with: dotnet publish -c Release -o bin/Release/net8.0/publish");
+                Log($"[StartupHook] libwin32_stubs.so not found at {hookDir}");
+                Log("[StartupHook] Build with: dotnet publish -c Release -o bin/Release/net8.0/publish");
                 return;
             }
 
             _kernel32StubHandle = NativeLibrary.Load(stubPath);
-            Console.WriteLine("[StartupHook] Loaded Win32 stubs (kernel32/user32/advapi32/...)");
+            Log("[StartupHook] Loaded Win32 stubs (kernel32/user32/advapi32/...)");
 
             // Intercept kernel32.dll resolution for ALL assemblies in default ALC
             AssemblyLoadContext.Default.ResolvingUnmanagedDll += ResolveWin32Stubs;
@@ -448,7 +463,7 @@ internal class StartupHook
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Kernel32 stub load failed: {ex.GetType().Name}: {ex.Message}");
+            Log($"[StartupHook] Kernel32 stub load failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -495,7 +510,7 @@ internal class StartupHook
             Type? resolverType = navLanguage.GetType("Microsoft.Dynamics.Nav.Common.CustomTranslationResolver");
             if (resolverType == null)
             {
-                Console.WriteLine("[StartupHook] CustomTranslationResolver type not found");
+                Log("[StartupHook] CustomTranslationResolver type not found");
                 return;
             }
 
@@ -521,7 +536,7 @@ internal class StartupHook
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Patch #1 failed: {ex.GetType().Name}: {ex.Message}");
+            Log($"[StartupHook] Patch #1 failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -538,7 +553,7 @@ internal class StartupHook
             Type? envType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavEnvironment");
             if (envType == null)
             {
-                Console.WriteLine("[StartupHook] NavEnvironment type not found");
+                Log("[StartupHook] NavEnvironment type not found");
                 return;
             }
 
@@ -555,7 +570,7 @@ internal class StartupHook
             }
             else
             {
-                Console.WriteLine("[StartupHook] NavEnvironment has no .cctor — nothing to patch");
+                Log("[StartupHook] NavEnvironment has no .cctor — nothing to patch");
             }
 
             // Hook ServiceAccount property (returns SecurityIdentifier from serviceAccount.User)
@@ -607,7 +622,7 @@ internal class StartupHook
                 {
                     _originalTopology = topoProp.GetValue(null);
                     topoProp.SetValue(null, linuxTopology);
-                    Console.WriteLine("[StartupHook] Replaced Topology with Linux proxy (ACL bypass)");
+                    Log("[StartupHook] Replaced Topology with compatibility proxy (ACL bypass)");
                 }
             }
 
@@ -615,8 +630,8 @@ internal class StartupHook
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Patch #2/#3 failed: {ex.GetType().Name}: {ex.Message}");
-            Console.WriteLine($"[StartupHook]   {ex.StackTrace}");
+            Log($"[StartupHook] Patch #2/#3 failed: {ex.GetType().Name}: {ex.Message}");
+            Log($"[StartupHook]   {ex.StackTrace}");
         }
     }
 
@@ -640,7 +655,7 @@ internal class StartupHook
                 "Microsoft.Dynamics.Nav.CodeAnalysis.DotNet.Cecil.CecilDotNetTypeLoader");
             if (loaderType == null)
             {
-                Console.WriteLine("[StartupHook] CecilDotNetTypeLoader type not found");
+                Log("[StartupHook] CecilDotNetTypeLoader type not found");
                 return;
             }
 
@@ -658,7 +673,7 @@ internal class StartupHook
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Patch #14 (Cecil type forwarding) failed: {ex.Message}");
+            Log($"[StartupHook] Patch #14 (Cecil type forwarding) failed: {ex.Message}");
         }
     }
 
@@ -685,12 +700,12 @@ internal class StartupHook
             }
             else
             {
-                Console.WriteLine("[StartupHook] Mono.Cecil.Mixin.CheckFileName not found");
+                Log("[StartupHook] Mono.Cecil.Mixin.CheckFileName not found");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Cecil CheckFileName patch failed: {ex.Message}");
+            Log($"[StartupHook] Cecil CheckFileName patch failed: {ex.Message}");
         }
     }
 
@@ -723,7 +738,7 @@ internal class StartupHook
                 "Microsoft.Dynamics.Nav.Runtime.Apps.NavAppCompilationAssemblyLocator");
             if (locatorType == null)
             {
-                Console.WriteLine("[StartupHook] NavAppCompilationAssemblyLocator not found");
+                Log("[StartupHook] NavAppCompilationAssemblyLocator not found");
                 return;
             }
 
@@ -738,12 +753,12 @@ internal class StartupHook
             }
             else
             {
-                Console.WriteLine("[StartupHook] GetLocationOfAssembliesLoadedInServerAppDomain not found");
+                Log("[StartupHook] GetLocationOfAssembliesLoadedInServerAppDomain not found");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Patch #15 (assembly probing) failed: {ex.Message}");
+            Log($"[StartupHook] Patch #15 (assembly probing) failed: {ex.Message}");
         }
     }
 
@@ -785,7 +800,7 @@ internal class StartupHook
             }
             catch { }
         }
-        Console.Error.WriteLine($"[StartupHook] Patch #15b: Well-known assemblies filtered ({dict.Count} kept, {skipped} runtime excluded)");
+        LogError($"[StartupHook] Patch #15b: Well-known assemblies filtered ({dict.Count} kept, {skipped} runtime excluded)");
         try { File.AppendAllText("/tmp/patch15-wellknown-hook-fired.txt",
             $"Kept={dict.Count}, Skipped={skipped}\n"); } catch { }
 
@@ -1090,7 +1105,7 @@ internal class StartupHook
     {
         try { File.AppendAllText("/tmp/patch15-gac-hook-fired.txt",
             $"EmptyGlobalAssemblyCacheDirs called at {DateTime.UtcNow}\n"); } catch { }
-        Console.Error.WriteLine("[StartupHook] Patch #15a: GetGlobalAssemblyCacheDirectories → empty (no runtime dir probing)");
+        LogError("[StartupHook] Patch #15a: GetGlobalAssemblyCacheDirectories → empty (no runtime dir probing)");
         return Array.Empty<string>();
     }
 
@@ -1112,7 +1127,7 @@ internal class StartupHook
             catch (Exception ex)
             {
                 if (!_reportingClientPatched)
-                    Console.WriteLine($"[StartupHook] Patch #19 retry: {ex.GetType().Name}: {ex.Message}");
+                    Log($"[StartupHook] Patch #19 retry: {ex.GetType().Name}: {ex.Message}");
             }
         }, null, TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(1));
     }
@@ -1136,7 +1151,7 @@ internal class StartupHook
                 BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
             if (prop == null)
             {
-                Console.WriteLine("[StartupHook] Patch #19: CustomReportingServiceClient not found");
+                Log("[StartupHook] Patch #19: CustomReportingServiceClient not found");
                 _reportingClientPatched = true;
                 return;
             }
@@ -1151,7 +1166,7 @@ internal class StartupHook
             clientDll = Path.Combine(baseDir, "SideServices", "Microsoft.BusinessCentral.Reporting.Client.dll");
         if (!File.Exists(clientDll))
         {
-            Console.WriteLine($"[StartupHook] Patch #19: {clientDll} not found");
+            Log($"[StartupHook] Patch #19: {clientDll} not found");
             _reportingClientPatched = true;
             return;
         }
@@ -1160,7 +1175,7 @@ internal class StartupHook
         Type? iClientType = clientAsm.GetType("Microsoft.BusinessCentral.Reporting.Client.IReportingServiceClient");
         if (iClientType == null)
         {
-            Console.WriteLine("[StartupHook] Patch #19: IReportingServiceClient type not found");
+            Log("[StartupHook] Patch #19: IReportingServiceClient type not found");
             _reportingClientPatched = true;
             return;
         }
@@ -1193,8 +1208,8 @@ internal class StartupHook
         }
 
         _reportingClientPatched = true;
-        Console.WriteLine(wineReportingEnabled
-            ? "[StartupHook] Patch #19: CustomReportingServiceClient → Wine reporting sidecar"
+        Log(wineReportingEnabled
+            ? "[StartupHook] Patch #19: CustomReportingServiceClient -> reporting service bridge"
             : "[StartupHook] Patch #19: CustomReportingServiceClient → no-op proxy");
     }
 
@@ -1239,7 +1254,7 @@ internal class StartupHook
         {
             if (targetMethod == null) return null;
 
-            Console.WriteLine($"[StartupHook] NoOp IReportingServiceClient.{targetMethod.Name}()");
+            Log($"[StartupHook] NoOp IReportingServiceClient.{targetMethod.Name}()");
             DumpReportingInvocation(targetMethod, args);
 
             var rt = targetMethod.ReturnType;
@@ -1301,7 +1316,7 @@ internal class StartupHook
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[StartupHook] Report dump failed: {ex.GetType().Name}: {ex.Message}");
+                Log($"[StartupHook] Report dump failed: {ex.GetType().Name}: {ex.Message}");
             }
         }
     }
@@ -1331,7 +1346,7 @@ internal class StartupHook
             var clientType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.SideServiceProcessClient");
             if (clientType == null)
             {
-                Console.WriteLine("[StartupHook] Patch #20: SideServiceProcessClient type not found — skipping");
+                Log("[StartupHook] Patch #20: SideServiceProcessClient type not found — skipping");
                 return;
             }
 
@@ -1343,11 +1358,11 @@ internal class StartupHook
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
             if (tryStart == null)
             {
-                Console.WriteLine("[StartupHook] Patch #20: TryStartService method not found — skipping");
+                Log("[StartupHook] Patch #20: TryStartService method not found — skipping");
                 return;
             }
 
-            Console.WriteLine($"[StartupHook] Patch #20: TryStartService returns {tryStart.ReturnType} (generic: {tryStart.ReturnType.IsGenericType})");
+            Log($"[StartupHook] Patch #20: TryStartService returns {tryStart.ReturnType} (generic: {tryStart.ReturnType.IsGenericType})");
             MethodInfo replacement;
             // Check for ValueTask<T> — the generic arg might not be bool
             if (tryStart.ReturnType.IsGenericType && tryStart.ReturnType.GetGenericTypeDefinition() == typeof(ValueTask<>))
@@ -1370,7 +1385,7 @@ internal class StartupHook
             }
 
             ApplyJmpHook(tryStart, replacement, "SideServiceProcessClient.TryStartService");
-            Console.WriteLine("[StartupHook] Patch #20: TryStartService hooked");
+            Log("[StartupHook] Patch #20: TryStartService hooked");
 
             // NOTE: Do NOT hook EnsureAlive — it's referenced by the CheckServicesAsync
             // async state machine. JMP-hooking it causes AccessViolationException / core dump.
@@ -1379,7 +1394,7 @@ internal class StartupHook
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Patch #20 failed: {ex.GetType().Name}: {ex.Message}");
+            Log($"[StartupHook] Patch #20 failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -1429,7 +1444,7 @@ internal class StartupHook
             var serverType = windowsServicesAsm.GetType("Microsoft.Dynamics.Nav.WindowsServices.DynamicsNavServer");
             if (serverType == null)
             {
-                Console.WriteLine("[StartupHook] Patch #18: DynamicsNavServer type not found");
+                Log("[StartupHook] Patch #18: DynamicsNavServer type not found");
                 return;
             }
 
@@ -1437,7 +1452,7 @@ internal class StartupHook
                 BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
             if (setupMethod == null)
             {
-                Console.WriteLine("[StartupHook] Patch #18: SetupSideServices method not found");
+                Log("[StartupHook] Patch #18: SetupSideServices method not found");
                 return;
             }
 
@@ -1445,18 +1460,18 @@ internal class StartupHook
             var noop = typeof(StartupHook).GetMethod(nameof(Replacement_SetupSideServices_Noop),
                 BindingFlags.Public | BindingFlags.Static)!;
             ApplyJmpHook(setupMethod, noop, "DynamicsNavServer.SetupSideServices");
-            Console.WriteLine("[StartupHook] Patch #18: SetupSideServices hooked (no-op on Linux)");
+            Log("[StartupHook] Patch #18: SetupSideServices hooked (no-op)");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Patch #18 failed: {ex.Message}");
+            Log($"[StartupHook] Patch #18 failed: {ex.Message}");
         }
     }
 
     /// <summary>No-op replacement for SetupSideServices (static method on DynamicsNavServer)</summary>
     public static void Replacement_SetupSideServices_Noop()
     {
-        Console.WriteLine("[StartupHook] Patch #18: SetupSideServices skipped (Linux — no Reporting Service)");
+        Log("[StartupHook] Patch #18: SetupSideServices skipped (external process managed by compatibility layer)");
     }
 
     // ========================================================================
@@ -1472,7 +1487,7 @@ internal class StartupHook
             var dbType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALDatabase");
             if (dbType == null)
             {
-                Console.WriteLine("[StartupHook] Patch #17: ALDatabase type not found");
+                Log("[StartupHook] Patch #17: ALDatabase type not found");
                 return;
             }
 
@@ -1480,7 +1495,7 @@ internal class StartupHook
             var alSidMethods = dbType.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
                 .Where(m => m.Name == "ALSid").ToArray();
 
-            Console.WriteLine($"[StartupHook] Patch #17: Found {alSidMethods.Length} ALSid overloads");
+            Log($"[StartupHook] Patch #17: Found {alSidMethods.Length} ALSid overloads");
             int hooked = 0;
             var replacement = typeof(StartupHook).GetMethod(nameof(Replacement_ALSid),
                 BindingFlags.Public | BindingFlags.Static)!;
@@ -1489,7 +1504,7 @@ internal class StartupHook
             {
                 var parms = m.GetParameters();
                 var sig = string.Join(", ", parms.Select(p => $"{p.ParameterType.Name} {p.Name}"));
-                Console.WriteLine($"[StartupHook]   ALSid({sig}) -> {m.ReturnType.Name}");
+                Log($"[StartupHook]   ALSid({sig}) -> {m.ReturnType.Name}");
 
                 // Patch the overload that takes a single string parameter
                 if (parms.Length == 1 && parms[0].ParameterType == typeof(string))
@@ -1500,13 +1515,13 @@ internal class StartupHook
             }
 
             if (hooked > 0)
-                Console.WriteLine($"[StartupHook] Patch #17: hooked {hooked} ALSid overload(s)");
+                Log($"[StartupHook] Patch #17: hooked {hooked} ALSid overload(s)");
             else
-                Console.WriteLine("[StartupHook] Patch #17: no matching ALSid(string) overload found");
+                Log("[StartupHook] Patch #17: no matching ALSid(string) overload found");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Patch #17 failed: {ex.Message}");
+            Log($"[StartupHook] Patch #17 failed: {ex.Message}");
         }
     }
 
@@ -1544,7 +1559,7 @@ internal class StartupHook
             var watsonType = watsonAsm.GetType("Microsoft.Dynamics.Nav.Watson.WatsonReporting");
             if (watsonType == null)
             {
-                Console.WriteLine("[StartupHook] Watson: WatsonReporting type not found");
+                Log("[StartupHook] Watson: WatsonReporting type not found");
                 return;
             }
 
@@ -1593,11 +1608,11 @@ internal class StartupHook
                 }
             }
 
-            Console.WriteLine($"[StartupHook] Watson: hooked {hooked} methods");
+            Log($"[StartupHook] Watson: hooked {hooked} methods");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Watson patch failed: {ex.Message}");
+            Log($"[StartupHook] Watson patch failed: {ex.Message}");
         }
     }
 
@@ -1631,7 +1646,7 @@ internal class StartupHook
                 if (field != null)
                 {
                     field.SetValue(null, noopWriter);
-                    Console.WriteLine("[StartupHook] Replaced EventLogWriter with no-op proxy");
+                    Log("[StartupHook] Replaced EventLogWriter with no-op proxy");
                 }
                 else
                 {
@@ -1639,12 +1654,12 @@ internal class StartupHook
                     var prop = eventLogWriterType.GetProperty("EventLogEntryWriter",
                         BindingFlags.Public | BindingFlags.Static);
                     prop?.SetValue(null, noopWriter);
-                    Console.WriteLine("[StartupHook] Replaced EventLogWriter via property setter");
+                    Log("[StartupHook] Replaced EventLogWriter via property setter");
                 }
             }
             else
             {
-                Console.WriteLine("[StartupHook] EventLogWriter or IEventLogEntryWriter not found");
+                Log("[StartupHook] EventLogWriter or IEventLogEntryWriter not found");
             }
 
             // --- Patch #5b: Replace NavDiagnostics.TraceWriter with no-op ---
@@ -1664,7 +1679,7 @@ internal class StartupHook
                 if (traceWriterField != null)
                 {
                     traceWriterField.SetValue(null, noopTelemetry);
-                    Console.WriteLine("[StartupHook] Pre-set NavDiagnostics.TraceWriter to no-op");
+                    Log("[StartupHook] Pre-set NavDiagnostics.TraceWriter to no-op");
                 }
             }
 
@@ -1700,7 +1715,7 @@ internal class StartupHook
                     var funcDelegate = dm.CreateDelegate(funcType);
 
                     prop.SetValue(null, funcDelegate);
-                    Console.WriteLine("[StartupHook] Set encryption provider to pass-through (plain text passwords)");
+                    Log("[StartupHook] Set encryption provider to pass-through (plain text passwords)");
                 }
             }
 
@@ -1726,11 +1741,11 @@ internal class StartupHook
                         var result = getGacDirs.Invoke(null, null);
                         var dirs = result as System.Collections.Generic.IEnumerable<string>;
                         int count = dirs != null ? System.Linq.Enumerable.Count(dirs) : -1;
-                        Console.WriteLine($"[StartupHook] GAC dirs hook test: {count} dirs returned (expect 0 if hook works)");
+                        Log($"[StartupHook] GAC dirs hook test: {count} dirs returned (expect 0 if hook works)");
                     }
                     catch (Exception testEx)
                     {
-                        Console.WriteLine($"[StartupHook] GAC dirs hook test failed: {testEx.InnerException?.Message ?? testEx.Message}");
+                        Log($"[StartupHook] GAC dirs hook test failed: {testEx.InnerException?.Message ?? testEx.Message}");
                     }
                 }
             }
@@ -1739,7 +1754,7 @@ internal class StartupHook
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Patch #4/5/7 failed: {ex.GetType().Name}: {ex.Message}");
+            Log($"[StartupHook] Patch #4/5/7 failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -1807,7 +1822,7 @@ internal class StartupHook
             if (targetMethod?.Name == "Decrypt" || targetMethod?.Name == "Encrypt")
             {
                 _encryptionBypassed = true;
-                Console.WriteLine($"[StartupHook] Encryption.{targetMethod.Name}() called — bypass working");
+                Log($"[StartupHook] Encryption.{targetMethod.Name}() called — bypass working");
             }
             return result;
         }
@@ -1828,13 +1843,13 @@ internal class StartupHook
             var asm = Assembly.LoadFrom(Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory ?? ".",
                 "Microsoft.Data.SqlClient.dll"));
-            Console.WriteLine($"[StartupHook] SqlClient verified: {asm.FullName}");
+            Log($"[StartupHook] SqlClient verified: {asm.FullName}");
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[StartupHook] WARNING: SqlClient pre-load failed: {ex}");
+            LogError($"[StartupHook] WARNING: SqlClient pre-load failed: {ex}");
             if (ex.InnerException != null)
-                Console.Error.WriteLine($"[StartupHook]   Inner: {ex.InnerException}");
+                LogError($"[StartupHook]   Inner: {ex.InnerException}");
         }
     }
 
@@ -1855,7 +1870,7 @@ internal class StartupHook
         string stubDll = Path.Combine(hookDir, dllName);
         if (!File.Exists(stubDll))
         {
-            Console.WriteLine($"[StartupHook] Stub for {dllName} not found — skipping");
+            Log($"[StartupHook] Stub for {dllName} not found — skipping");
             return;
         }
 
@@ -1866,11 +1881,11 @@ internal class StartupHook
                 File.Copy(targetDll, backup, overwrite: false);
 
             File.Copy(stubDll, targetDll, overwrite: true);
-            Console.WriteLine($"[StartupHook] Replaced {dllName} with stub ({description})");
+            Log($"[StartupHook] Replaced {dllName} with stub ({description})");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] {dllName} replacement failed: {ex.Message}");
+            Log($"[StartupHook] {dllName} replacement failed: {ex.Message}");
         }
     }
 
@@ -1948,15 +1963,15 @@ internal class StartupHook
                         factoryField.SetValue(null, dm.CreateDelegate(funcType));
                     }
 
-                    Console.WriteLine("[StartupHook] Replaced encryption Instance + Factory");
+                    Log("[StartupHook] Replaced encryption Instance + Factory");
                 }
             }
 
-            Console.WriteLine("[StartupHook] Re-applied encryption bypass (after Nav.Core load)");
+            Log("[StartupHook] Re-applied encryption bypass (after Nav.Core load)");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Encryption re-apply failed: {ex.GetType().Name}: {ex.Message}");
+            Log($"[StartupHook] Encryption re-apply failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -1982,13 +1997,13 @@ internal class StartupHook
                     .MakeGenericMethod(topoIfaceType, typeof(LinuxTopologyProxy));
                 topoProp.SetValue(null, createProxy.Invoke(null, null));
 
-                Console.WriteLine("[StartupHook] Re-applied Linux topology proxy (after Nav.Core load)");
+                Log("[StartupHook] Re-applied compatibility topology proxy (after Nav.Core load)");
                 break;
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Topology re-apply failed: {ex.GetType().Name}: {ex.Message}");
+            Log($"[StartupHook] Topology re-apply failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -2020,7 +2035,7 @@ internal class StartupHook
         string stubDll = Path.Combine(hookDir, dllName);
         if (!File.Exists(stubDll))
         {
-            Console.WriteLine($"[StartupHook] Stub for {assemblyName} not found — skipping");
+            Log($"[StartupHook] Stub for {assemblyName} not found — skipping");
             return;
         }
 
@@ -2028,7 +2043,7 @@ internal class StartupHook
 
         if (alreadyMoved)
         {
-            Console.WriteLine($"[StartupHook] {assemblyName} stub ready (already moved, via resolver)");
+            Log($"[StartupHook] {assemblyName} stub ready (already moved, via resolver)");
             return;
         }
 
@@ -2043,11 +2058,11 @@ internal class StartupHook
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Could not move {dllName}: {ex.Message}");
+            Log($"[StartupHook] Could not move {dllName}: {ex.Message}");
             return;
         }
 
-        Console.WriteLine($"[StartupHook] {assemblyName} stub ready (via resolver)");
+        Log($"[StartupHook] {assemblyName} stub ready (via resolver)");
     }
 
     // Map of TestPageClient dependency assemblies to the actual DLLs that contain them.
@@ -2067,7 +2082,7 @@ internal class StartupHook
     {
         if (name.Name != null && _stubBytesMap.TryGetValue(name.Name, out var bytes))
         {
-            Console.WriteLine($"[StartupHook] Providing {name.Name} stub via resolver");
+            Log($"[StartupHook] Providing {name.Name} stub via resolver");
             return Assembly.Load(bytes);
         }
 
@@ -2079,11 +2094,11 @@ internal class StartupHook
                 var targetPath = Path.Combine(dir, targetDll);
                 if (File.Exists(targetPath))
                 {
-                    Console.WriteLine($"[StartupHook] Redirecting {name.Name} → {targetPath} (TestPage support)");
+                    Log($"[StartupHook] Redirecting {name.Name} → {targetPath} (TestPage support)");
                     return context.LoadFromAssemblyPath(targetPath);
                 }
             }
-            Console.WriteLine($"[StartupHook] WARNING: Cannot redirect {name.Name} — {targetDll} not found");
+            Log($"[StartupHook] WARNING: Cannot redirect {name.Name} — {targetDll} not found");
         }
 
         return null;
@@ -2094,7 +2109,7 @@ internal class StartupHook
         var name = new AssemblyName(args.Name);
         // Log ALL resolve attempts to diagnose TestPageClient loading
         if (name.Name != null && name.Name.Contains("Dynamics"))
-            Console.WriteLine($"[StartupHook] AssemblyResolve attempt: {name.Name} (from {args.RequestingAssembly?.GetName().Name ?? "?"})");
+            Log($"[StartupHook] AssemblyResolve attempt: {name.Name} (from {args.RequestingAssembly?.GetName().Name ?? "?"})");
         if (name.Name != null && _testPageClientRedirects.TryGetValue(name.Name, out var targetDll))
         {
             foreach (var dir in new[] { "/bc/service", Path.GetDirectoryName(typeof(StartupHook).Assembly.Location) ?? "" })
@@ -2102,7 +2117,7 @@ internal class StartupHook
                 var targetPath = Path.Combine(dir, targetDll);
                 if (File.Exists(targetPath))
                 {
-                    Console.WriteLine($"[StartupHook] AssemblyResolve: {name.Name} → {targetPath}");
+                    Log($"[StartupHook] AssemblyResolve: {name.Name} → {targetPath}");
                     return Assembly.LoadFrom(targetPath);
                 }
             }
@@ -2134,15 +2149,15 @@ internal class StartupHook
                         nameof(Replacement_TryAuthenticate),
                         BindingFlags.Static | BindingFlags.NonPublic);
                     ApplyJmpHook(m, replacement!, "NavUser.TryAuthenticate(NavUser,UserNameSecurityToken,NavTenant)");
-                    Console.WriteLine("[StartupHook] Patch #16b: NavUser.TryAuthenticate bypassed");
+                    Log("[StartupHook] Patch #16b: NavUser.TryAuthenticate bypassed");
                     return;
                 }
             }
-            Console.WriteLine("[StartupHook] Patch #16b: TryAuthenticate overload not found");
+            Log("[StartupHook] Patch #16b: TryAuthenticate overload not found");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Patch #16b failed: {ex.Message}");
+            Log($"[StartupHook] Patch #16b failed: {ex.Message}");
         }
     }
 
@@ -2173,7 +2188,7 @@ internal class StartupHook
             var actionType = navClientUi.GetType("Microsoft.Dynamics.Nav.Client.Actions.NavOpenTaskPageAction");
             if (actionType == null)
             {
-                Console.WriteLine("[StartupHook] Patch #21: NavOpenTaskPageAction type not found — skipping");
+                Log("[StartupHook] Patch #21: NavOpenTaskPageAction type not found — skipping");
                 return;
             }
 
@@ -2181,7 +2196,7 @@ internal class StartupHook
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
             if (showForm == null)
             {
-                Console.WriteLine("[StartupHook] Patch #21: ShowForm method not found — skipping");
+                Log("[StartupHook] Patch #21: ShowForm method not found — skipping");
                 return;
             }
 
@@ -2189,11 +2204,11 @@ internal class StartupHook
                 nameof(Replacement_ShowForm),
                 BindingFlags.Static | BindingFlags.NonPublic)!;
             ApplyJmpHook(showForm, replacement, "NavOpenTaskPageAction.ShowForm");
-            Console.WriteLine("[StartupHook] Patch #21: NavOpenTaskPageAction.ShowForm hooked (no-op on Linux)");
+            Log("[StartupHook] Patch #21: NavOpenTaskPageAction.ShowForm hooked (no-op)");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Patch #21 failed: {ex.GetType().Name}: {ex.Message}");
+            Log($"[StartupHook] Patch #21 failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -2207,7 +2222,7 @@ internal class StartupHook
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void Replacement_ShowForm(object self, object? childForm, object? parentForm, object? uiSession, object? formState)
     {
-        Console.WriteLine("[StartupHook] Patch #21: NavOpenTaskPageAction.ShowForm skipped (no headless UI on Linux)");
+        Log("[StartupHook] Patch #21: NavOpenTaskPageAction.ShowForm skipped (no client UI)");
     }
 
     // ========================================================================
@@ -2221,7 +2236,7 @@ internal class StartupHook
             var queryType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.AzureADGraphQuery");
             if (queryType == null)
             {
-                Console.WriteLine("[StartupHook] Patch #22: AzureADGraphQuery type not found — skipping");
+                Log("[StartupHook] Patch #22: AzureADGraphQuery type not found — skipping");
                 return;
             }
 
@@ -2239,7 +2254,7 @@ internal class StartupHook
 
             if (ctor == null)
             {
-                Console.WriteLine("[StartupHook] Patch #22: AzureADGraphQuery..ctor(NavSession) not found — skipping");
+                Log("[StartupHook] Patch #22: AzureADGraphQuery..ctor(NavSession) not found — skipping");
                 return;
             }
 
@@ -2247,11 +2262,11 @@ internal class StartupHook
                 nameof(Replacement_AzureADGraphQueryCtor),
                 BindingFlags.Static | BindingFlags.NonPublic)!;
             ApplyJmpHook(ctor, replacement, "AzureADGraphQuery..ctor(NavSession)");
-            Console.WriteLine("[StartupHook] Patch #22: AzureADGraphQuery..ctor hooked — Azure AD credential init bypassed");
+            Log("[StartupHook] Patch #22: AzureADGraphQuery..ctor hooked — Azure AD credential init bypassed");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Patch #22 failed: {ex.GetType().Name}: {ex.Message}");
+            Log($"[StartupHook] Patch #22 failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -2266,7 +2281,7 @@ internal class StartupHook
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void Replacement_AzureADGraphQueryCtor(object self, object? session)
     {
-        Console.WriteLine("[StartupHook] Patch #22: AzureADGraphQuery..ctor skipped (no Azure AD on Linux)");
+        Log("[StartupHook] Patch #22: AzureADGraphQuery..ctor skipped (credential integration disabled)");
     }
 
     // ========================================================================
@@ -2300,7 +2315,7 @@ internal class StartupHook
                 "Microsoft.Dynamics.Nav.OpenXml.Word.DocumentMerger.OfficeWordDocumentPictureMerger");
             if (mergerType == null)
             {
-                Console.WriteLine("[StartupHook] Patch #23: OfficeWordDocumentPictureMerger type not found — skipping");
+                Log("[StartupHook] Patch #23: OfficeWordDocumentPictureMerger type not found — skipping");
                 return;
             }
 
@@ -2319,7 +2334,7 @@ internal class StartupHook
 
             if (target == null)
             {
-                Console.WriteLine("[StartupHook] Patch #23: ReplaceMissingImageWithTransparentImage not found — skipping");
+                Log("[StartupHook] Patch #23: ReplaceMissingImageWithTransparentImage not found — skipping");
                 return;
             }
 
@@ -2327,11 +2342,11 @@ internal class StartupHook
                 nameof(Replacement_ReplaceMissingImageWithTransparentImage),
                 BindingFlags.Static | BindingFlags.NonPublic)!;
             ApplyJmpHook(target, replacement, "OfficeWordDocumentPictureMerger.ReplaceMissingImageWithTransparentImage");
-            Console.WriteLine("[StartupHook] Patch #23: ReplaceMissingImageWithTransparentImage hooked (recursion broken)");
+            Log("[StartupHook] Patch #23: ReplaceMissingImageWithTransparentImage hooked (recursion broken)");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Patch #23 failed: {ex.GetType().Name}: {ex.Message}");
+            Log($"[StartupHook] Patch #23 failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -2362,7 +2377,7 @@ internal class StartupHook
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Patch #24 (NSClientCallback) failed: {ex.GetType().Name}: {ex.Message}");
+            Log($"[StartupHook] Patch #24 (NSClientCallback) failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -2375,7 +2390,7 @@ internal class StartupHook
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Patch #24 (HeadlessClientCallback) failed: {ex.GetType().Name}: {ex.Message}");
+            Log($"[StartupHook] Patch #24 (HeadlessClientCallback) failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -2383,7 +2398,7 @@ internal class StartupHook
     {
         if (callbackType == null)
         {
-            Console.WriteLine($"[StartupHook] Patch #24: {name} type not found — skipping");
+            Log($"[StartupHook] Patch #24: {name} type not found — skipping");
             return;
         }
 
@@ -2391,7 +2406,7 @@ internal class StartupHook
             .FirstOrDefault(m => m.Name == "CreateDotNetHandle" && m.GetParameters().Length == 6);
         if (method == null)
         {
-            Console.WriteLine($"[StartupHook] Patch #24: {name} method not found — skipping");
+            Log($"[StartupHook] Patch #24: {name} method not found — skipping");
             return;
         }
 
@@ -2399,7 +2414,7 @@ internal class StartupHook
             nameof(Replacement_CreateDotNetHandle),
             BindingFlags.Static | BindingFlags.NonPublic)!;
         ApplyJmpHook(method, replacement, name);
-        Console.WriteLine($"[StartupHook] Patch #24: {name} hooked (dummy client DotNet handle)");
+        Log($"[StartupHook] Patch #24: {name} hooked (dummy client DotNet handle)");
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -2449,7 +2464,7 @@ internal class StartupHook
         {
             byte[] precodeBytes = new byte[24];
             Marshal.Copy(origFp, precodeBytes, 0, 24);
-            Console.WriteLine($"[StartupHook]   {name} precode: {BitConverter.ToString(precodeBytes)}");
+            Log($"[StartupHook]   {name} precode: {BitConverter.ToString(precodeBytes)}");
 
             // .NET 8 x64 FixupPrecode: 49 BA [8-byte MethodDesc] FF 25 [4-byte disp32]
             if (precodeBytes[10] == 0xFF && precodeBytes[11] == 0x25)
@@ -2457,7 +2472,7 @@ internal class StartupHook
                 int disp32 = BitConverter.ToInt32(precodeBytes, 12);
                 IntPtr jmpTargetAddr = origFp + 16 + disp32;
                 compiledCode = Marshal.ReadIntPtr(jmpTargetAddr);
-                Console.WriteLine($"[StartupHook]   {name} compiled code via precode JMP: 0x{compiledCode:X}");
+                Log($"[StartupHook]   {name} compiled code via precode JMP: 0x{compiledCode:X}");
             }
 
             // Try StubPrecode format: jmp [rip+disp32] (FF 25) at offset 0
@@ -2466,7 +2481,7 @@ internal class StartupHook
                 int disp32 = BitConverter.ToInt32(precodeBytes, 2);
                 IntPtr jmpTargetAddr = origFp + 6 + disp32;
                 compiledCode = Marshal.ReadIntPtr(jmpTargetAddr);
-                Console.WriteLine($"[StartupHook]   {name} compiled code via StubPrecode: 0x{compiledCode:X}");
+                Log($"[StartupHook]   {name} compiled code via StubPrecode: 0x{compiledCode:X}");
             }
 
             // Try E9 (relative JMP) at offset 0
@@ -2474,7 +2489,7 @@ internal class StartupHook
             {
                 int disp32 = BitConverter.ToInt32(precodeBytes, 1);
                 compiledCode = origFp + 5 + disp32;
-                Console.WriteLine($"[StartupHook]   {name} compiled code via E9 JMP: 0x{compiledCode:X}");
+                Log($"[StartupHook]   {name} compiled code via E9 JMP: 0x{compiledCode:X}");
             }
 
             // MethodDesc approach as fallback
@@ -2486,7 +2501,7 @@ internal class StartupHook
                     IntPtr ptr = Marshal.ReadIntPtr(methodDesc, offset);
                     if (ptr != IntPtr.Zero && ptr != origFp && ptr != methodDesc)
                     {
-                        Console.WriteLine($"[StartupHook]   {name} MethodDesc+{offset}: 0x{ptr:X}");
+                        Log($"[StartupHook]   {name} MethodDesc+{offset}: 0x{ptr:X}");
                     }
                 }
                 IntPtr codeDataPtr = Marshal.ReadIntPtr(methodDesc, 8);
@@ -2496,7 +2511,7 @@ internal class StartupHook
         }
         catch (Exception dbgEx)
         {
-            Console.WriteLine($"[StartupHook]   precode read failed: {dbgEx.Message}");
+            Log($"[StartupHook]   precode read failed: {dbgEx.Message}");
         }
 
         // Patch the precode entry point
@@ -2511,7 +2526,7 @@ internal class StartupHook
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[StartupHook]   (compiled code patch failed: {ex.Message})");
+                Log($"[StartupHook]   (compiled code patch failed: {ex.Message})");
             }
         }
     }
@@ -2532,12 +2547,12 @@ internal class StartupHook
         int ret = mprotect(new IntPtr(pageStart), regionSize, PROT_READ | PROT_WRITE | PROT_EXEC);
         if (ret != 0)
         {
-            Console.WriteLine($"[StartupHook] mprotect failed for {name}: errno={Marshal.GetLastWin32Error()}");
+            Log($"[StartupHook] mprotect failed for {name}: errno={Marshal.GetLastWin32Error()}");
             return;
         }
 
         Marshal.Copy(jmp, 0, target, jmp.Length);
-        Console.WriteLine($"[StartupHook] Patched {name} at 0x{target:X} -> 0x{destination:X}");
+        Log($"[StartupHook] Patched {name} at 0x{target:X} -> 0x{destination:X}");
     }
 
     // ========================================================================
@@ -2554,7 +2569,7 @@ internal class StartupHook
         var field = type.GetField(fieldName, flags);
         if (field == null)
         {
-            Console.WriteLine($"[StartupHook]   Field {fieldName} not found");
+            Log($"[StartupHook]   Field {fieldName} not found");
             return;
         }
 
@@ -2568,7 +2583,7 @@ internal class StartupHook
             // Readonly (initonly) field — use DynamicMethod to bypass
             SetReadonlyStaticField(field, value);
         }
-        Console.WriteLine($"[StartupHook]   Set {fieldName} = {value ?? "null"}");
+        Log($"[StartupHook]   Set {fieldName} = {value ?? "null"}");
     }
 
     /// <summary>
@@ -2621,7 +2636,7 @@ internal class StartupHook
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook]   Cannot init {fieldName} ({field.FieldType.Name}): {ex.GetType().Name}: {ex.Message}");
+            Log($"[StartupHook]   Cannot init {fieldName} ({field.FieldType.Name}): {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -2651,7 +2666,7 @@ internal class StartupHook
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void Replacement_NavOpenTelemetryLoggerCtor(object self, int traceLevel, object? contextColumns, string? logFileFolder)
     {
-        Console.WriteLine("[StartupHook] NavOpenTelemetryLogger..ctor skipped (no ETW on Linux)");
+        Log("[StartupHook] NavOpenTelemetryLogger..ctor skipped (telemetry backend disabled)");
     }
 
 
@@ -2679,7 +2694,7 @@ internal class StartupHook
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void Replacement_NavEnvironmentCctor()
     {
-        Console.WriteLine("[StartupHook] Running NavEnvironment..cctor replacement");
+        Log("[StartupHook] Running NavEnvironment..cctor replacement");
         var type = _navEnvironmentType!;
 
         try
@@ -2702,12 +2717,12 @@ internal class StartupHook
             TryInitField(type, "defaultAwaitedShutdownConnectionTypesList");
             TryInitField(type, "defaultRestartNotificationConnectionTypesList");
 
-            Console.WriteLine("[StartupHook] NavEnvironment..cctor replacement completed");
+            Log("[StartupHook] NavEnvironment..cctor replacement completed");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] NavEnvironment..cctor replacement error: {ex.GetType().Name}: {ex.Message}");
-            Console.WriteLine($"[StartupHook]   {ex.StackTrace}");
+            Log($"[StartupHook] NavEnvironment..cctor replacement error: {ex.GetType().Name}: {ex.Message}");
+            Log($"[StartupHook]   {ex.StackTrace}");
         }
     }
 
