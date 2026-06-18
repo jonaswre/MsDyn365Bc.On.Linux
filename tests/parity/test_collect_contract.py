@@ -403,6 +403,47 @@ class CollectContractTests(unittest.TestCase):
         self.assertIn(("http://localhost:7085/BC/", None), calls)
         self.assertIn(("http://localhost:7085/BC/client/csrf", None), calls)
 
+    def test_collect_missing_routes_records_user_visible_error_shape(self):
+        args = SimpleNamespace(
+            base_url="http://localhost:7046/BC",
+            soap_url="http://localhost:7047/BC/WS/Services",
+            web_client_url="http://localhost:7085/BC/",
+            dev_url="http://localhost:7049/BC/dev",
+            odata_url="http://localhost:7048/BC/ODataV4",
+            api_url="http://localhost:7052/BC/api/v2.0",
+            auth="admin:admin",
+        )
+        calls = []
+
+        def fake_fetch_text(url, auth=None, headers=None, timeout=15):
+            del headers, timeout
+            calls.append((url, auth))
+            if url == "http://localhost:7085/BC/missing-parity-route":
+                return 404, {"Content-Type": "text/html"}, "<html>Not Found</html>"
+            return 404, {"Content-Type": "application/json"}, '{"error":{"code":"BadRequest_NotFound","message":"missing"}}'
+
+        original_fetch_text = collect_contract.fetch_text
+        try:
+            collect_contract.fetch_text = fake_fetch_text
+            result = collect_contract.collect_missing_routes(args, {})
+        finally:
+            collect_contract.fetch_text = original_fetch_text
+
+        self.assertEqual(
+            {
+                "httpClass": "4xx",
+                "contentTypeClass": "json",
+                "payloadClass": "json",
+                "xmlRoot": "",
+                "bodyExcerpt": '{"error":{"code":"BadRequest_NotFound","message":"missing"}}',
+            },
+            result["api"],
+        )
+        self.assertEqual("html", result["webClient"]["contentTypeClass"])
+        self.assertEqual("html", result["webClient"]["payloadClass"])
+        self.assertIn(("http://localhost:7052/BC/api/v2.0/missing-parity-endpoint", "admin:admin"), calls)
+        self.assertIn(("http://localhost:7085/BC/missing-parity-route", None), calls)
+
     def test_collect_company_records_company_counts_and_first_ids(self):
         args = SimpleNamespace(
             api_url="http://localhost:7052/BC/api/v2.0",

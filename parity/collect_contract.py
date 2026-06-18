@@ -520,6 +520,44 @@ def collect_headers(args: argparse.Namespace, diagnostics: dict[str, str]) -> di
     }
 
 
+def response_error_signature(status: int, headers: dict[str, str], body: str) -> dict[str, Any]:
+    signature = payload_signature(body)
+    return {
+        "httpClass": http_class(status),
+        "contentTypeClass": content_type_class(headers),
+        "payloadClass": web_payload_class(headers, body),
+        "xmlRoot": signature["xmlRoot"],
+        "bodyExcerpt": normalized_body_excerpt(status, body),
+    }
+
+
+def missing_route_probe(
+    url: str, auth: str | None, diagnostics: dict[str, str], name: str
+) -> dict[str, Any]:
+    status, headers, body = fetch_text(url, auth)
+    record_zero_status(diagnostics, f"missingRoutes.{name}", url, status)
+    return response_error_signature(status, headers, body)
+
+
+def collect_missing_routes(args: argparse.Namespace, diagnostics: dict[str, str]) -> dict[str, dict[str, Any]]:
+    web_client_base_url = optional_url(args.web_client_url, join_url(args.base_url, "client/SignIn"))
+    endpoints: dict[str, tuple[str, str | None]] = {
+        "api": (join_url(args.api_url, "missing-parity-endpoint"), args.auth),
+        "odata": (join_url(args.odata_url, "MissingParityEntity"), args.auth),
+        "soap": (
+            optional_url(args.soap_url, join_url(args.base_url, "WS/Services")).rsplit("/", 1)[0]
+            + "/MissingParityService",
+            args.auth,
+        ),
+        "dev": (join_url(args.dev_url, "missing-parity-endpoint"), args.auth),
+        "webClient": (join_url(web_client_base_url, "missing-parity-route"), None),
+    }
+    return {
+        name: missing_route_probe(url, auth, diagnostics, name)
+        for name, (url, auth) in endpoints.items()
+    }
+
+
 def collect_web_client(args: argparse.Namespace, diagnostics: dict[str, str]) -> dict[str, Any]:
     web_client_base_url = optional_url(args.web_client_url, join_url(args.base_url, "client/SignIn"))
     return {
@@ -923,6 +961,7 @@ def build_contract(args: argparse.Namespace) -> dict[str, Any]:
         "auth": auth,
         "company": collect_company(args, diagnostics),
         "headers": collect_headers(args, diagnostics),
+        "missingRoutes": collect_missing_routes(args, diagnostics),
         "webClient": collect_web_client(args, diagnostics),
         "integration": collect_integration(args, diagnostics, company_id),
         "dev": collect_dev(args, diagnostics),
