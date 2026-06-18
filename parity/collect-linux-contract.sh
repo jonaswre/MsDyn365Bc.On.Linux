@@ -41,7 +41,7 @@ else
     --test-runner-app "$test_runner_extension_app" \
     --auth "$auth" \
     --base-url "http://localhost:7046/BC" \
-    --codeunit-range "70000|70001" \
+    --codeunit-range "70000|70001|70003" \
     --timeout 30 2>&1 | tee "$test_log" || test_status=$?
 fi
 

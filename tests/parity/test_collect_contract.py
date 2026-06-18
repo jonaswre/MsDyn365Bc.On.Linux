@@ -862,11 +862,11 @@ class CollectContractTests(unittest.TestCase):
         self.assertIn("permission endpoint exploded", diagnostics["users.permissions"])
 
     def test_summarize_test_output_parses_current_run_tests_format(self):
-        output = "Test codeunits: 70000,70001\ntotal=4 passed=4 failed=0 skipped=0\n"
+        output = "Test codeunits: 70000,70001,70003\ntotal=5 passed=5 failed=0 skipped=0\n"
         summary = summarize_test_output(output, "websocket")
-        self.assertEqual(2, summary["testCodeunitCount"])
-        self.assertEqual(4, summary["total"])
-        self.assertEqual(4, summary["passed"])
+        self.assertEqual(3, summary["testCodeunitCount"])
+        self.assertEqual(5, summary["total"])
+        self.assertEqual(5, summary["passed"])
         self.assertEqual(0, summary["failed"])
         self.assertEqual(0, summary["skipped"])
         self.assertEqual("websocket", summary["runnerKind"])

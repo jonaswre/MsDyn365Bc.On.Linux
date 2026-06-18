@@ -3,8 +3,9 @@
   "name": "BC Container Smoke Test",
   "publisher": "BCContainer",
   "version": "1.0.0.0",
-  "brief": "Smoke test for the Business Central container surface. Two codeunits with two trivial tests each. Used by the test-versions matrix workflow to verify each BC version end-to-end via the reusable bc-test-from-source workflow.",
+  "brief": "Smoke test for the Business Central container surface. Used by the test-versions and parity workflows to verify each BC version end-to-end.",
   "runtime": "14.0",
+  "application": "14.0.0.0",
   "target": "Cloud",
   "dependencies": [
     {
@@ -17,7 +18,7 @@
   "idRanges": [
     {
       "from": 70000,
-      "to": 70002
+      "to": 70003
     }
   ]
 }

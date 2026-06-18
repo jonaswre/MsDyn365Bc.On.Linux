@@ -41,15 +41,15 @@ function Invoke-NativeChecked([string]$CapabilityCode, [string[]]$Command) {
 }
 
 function Write-FailedTestSummary([string]$TestLog, [string]$Message) {
-    "Test codeunits: 70000,70001" | Set-Content -Path $TestLog
-    "total=4 passed=0 failed=4 skipped=0" | Add-Content -Path $TestLog
+    "Test codeunits: 70000,70001,70003" | Set-Content -Path $TestLog
+    "total=5 passed=0 failed=5 skipped=0" | Add-Content -Path $TestLog
     if ($Message) {
         $Message | Add-Content -Path $TestLog
     }
 }
 
 function Write-TestSummaryFromXUnit([string]$XUnitPath, [string]$TestLog) {
-    "Test codeunits: 70000,70001" | Set-Content -Path $TestLog
+    "Test codeunits: 70000,70001,70003" | Set-Content -Path $TestLog
     [xml]$xunit = Get-Content -Path $XUnitPath
     $assemblies = @($xunit.assemblies.assembly)
     if ($assemblies.Count -eq 0) {
@@ -169,7 +169,7 @@ try {
         -containerName $ContainerName `
         -credential $credential `
         -extensionId "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" `
-        -testCodeunitRange "70000|70001" `
+        -testCodeunitRange "70000|70001|70003" `
         -detailed `
         -XUnitResultFileName $xunitPath `
         -ReturnTrueIfAllPassed
@@ -186,9 +186,9 @@ try {
         if (-not $allPassed) {
             $testStatus = 1
             "Run-TestsInBcContainer returned false" | Add-Content -Path $testLog
-        } elseif ($summary.Total -ne 4) {
+        } elseif ($summary.Total -ne 5) {
             $testStatus = 1
-            "Expected 4 tests in XUnit result, found $($summary.Total): $xunitPath" | Add-Content -Path $testLog
+            "Expected 5 tests in XUnit result, found $($summary.Total): $xunitPath" | Add-Content -Path $testLog
         } elseif ($summary.Failed -ne 0) {
             $testStatus = 1
             "XUnit result reported $($summary.Failed) failed tests" | Add-Content -Path $testLog
