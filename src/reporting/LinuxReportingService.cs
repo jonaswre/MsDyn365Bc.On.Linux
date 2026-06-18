@@ -153,7 +153,7 @@ public sealed class LinuxReportingService : ReportingService.ReportingServiceBas
     {
         return responseStream.WriteAsync(new PrintReportResponse
         {
-            Exception = PackException(new NotSupportedException("Server-side printing is not supported by the Linux reporting sidecar."))
+            Exception = PackException(new NotSupportedException("Server-side printing is not available in this container."))
         });
     }
 
@@ -248,7 +248,7 @@ public sealed class LinuxReportingService : ReportingService.ReportingServiceBas
         localReport.EnableHyperlinks = context.EnableHyperlinks;
         localReport.EnableExternalImages = context.EnableExternalImages;
         if (context.EnableExternalAssemblies)
-            throw new NotSupportedException("External report assemblies are not supported by the Linux reporting sidecar.");
+            throw new NotSupportedException("External report assemblies are not supported for local report rendering.");
         ((Report)localReport).LoadReportDefinition(new MemoryStream(layout));
         PatchReportViewerCasState(localReport);
         typeof(LocalReportHandle)

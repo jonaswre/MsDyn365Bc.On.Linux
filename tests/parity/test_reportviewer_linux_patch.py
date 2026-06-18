@@ -58,7 +58,8 @@ class ReportViewerLinuxPatchTests(unittest.TestCase):
         self.assertIn("LocalReportHandle", source)
         self.assertIn("DataSet_Result", source)
         self.assertIn("RenderWithoutDiagnostics", source)
-        self.assertIn("Server-side printing is not supported", source)
+        self.assertIn("Server-side printing is not available in this container", source)
+        self.assertNotIn("not supported by the Linux reporting sidecar", source)
 
 
 if __name__ == "__main__":
