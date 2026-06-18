@@ -380,6 +380,55 @@ if [ -f /bc/tools/patcher/PatchNclTestPage.dll ]; then
     fi
 fi
 
+# Patch ReportViewer local-processing code paths that assume Windows service
+# semantics: impersonation, expression-host cleanup, and GDI+ generic font
+# fallback behavior under Wine.
+if [ -f /bc/tools/reportviewer/PatchReportViewerLinux.dll ] && [ -f "$SERVICE_DIR/SideServices/Microsoft.ReportViewer.Common.dll" ]; then
+    if dotnet /bc/tools/reportviewer/PatchReportViewerLinux.dll "$SERVICE_DIR/SideServices/Microsoft.ReportViewer.Common.dll" 2>&1 | tail -1; then
+        log_step "Patched ReportViewer.Common.dll (Linux/Wine report rendering)"
+    fi
+fi
+
+BC_ENABLE_WINE_REPORTING="${BC_ENABLE_WINE_REPORTING:-true}"
+BC_REPORTING_GRPC_PORT="${BC_REPORTING_GRPC_PORT:-17778}"
+export BC_ENABLE_WINE_REPORTING BC_REPORTING_GRPC_PORT
+
+if [ "$BC_ENABLE_WINE_REPORTING" = "true" ] && [ -f /bc/reporting/LinuxReportingService.cs ]; then
+    REPORTING_EXE="$SERVICE_DIR/SideServices/LinuxReportingService.exe"
+    REPORTING_LOG="/tmp/linux-reporting-service.log"
+    log_step "Compiling Linux reporting sidecar..."
+    (
+        cd "$SERVICE_DIR/SideServices"
+        mcs -langversion:latest -target:exe -out:"$REPORTING_EXE" \
+            -r:/usr/lib/mono/4.7.2-api/Facades/netstandard.dll \
+            -r:Google.Protobuf.dll \
+            -r:Grpc.Core.dll \
+            -r:Grpc.Core.Api.dll \
+            -r:Microsoft.BusinessCentral.Reporting.Common.dll \
+            -r:Microsoft.BusinessCentral.Reporting.Server.dll \
+            -r:Microsoft.Dynamics.Nav.Types.Report.Base.dll \
+            -r:Microsoft.Dynamics.Nav.Types.dll \
+            -r:Microsoft.ReportViewer.Common.dll \
+            -r:Microsoft.ReportViewer.WebForms.dll \
+            -r:Newtonsoft.Json.dll \
+            -r:System.Drawing \
+            -r:System.Xml \
+            /bc/reporting/LinuxReportingService.cs
+    )
+    cp /usr/share/fonts/truetype/dejavu/*.ttf /root/.wine/drive_c/windows/Fonts/ 2>/dev/null || true
+    cp /usr/share/fonts/truetype/liberation/*.ttf /root/.wine/drive_c/windows/Fonts/ 2>/dev/null || true
+    fc-cache -f || true
+    WINEDEBUG="${BC_REPORTING_WINEDEBUG:--all}" wine "$REPORTING_EXE" "$BC_REPORTING_GRPC_PORT" > "$REPORTING_LOG" 2>&1 &
+    REPORTING_PID=$!
+    sleep 2
+    if ! kill -0 "$REPORTING_PID" 2>/dev/null; then
+        log_step "Linux reporting sidecar failed to start"
+        tail -80 "$REPORTING_LOG" || true
+        exit 1
+    fi
+    log_step "Started Linux reporting sidecar on gRPC port $BC_REPORTING_GRPC_PORT"
+fi
+
 # Fix Add-Ins directory case (Linux is case-sensitive, BC expects "Add-Ins")
 if [ -d "$SERVICE_DIR/Add-ins" ] && [ ! -d "$SERVICE_DIR/Add-Ins" ]; then
     mv "$SERVICE_DIR/Add-ins" "$SERVICE_DIR/Add-Ins"

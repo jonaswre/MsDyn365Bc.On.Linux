@@ -72,6 +72,9 @@ services:
       # Diagnostic only — when 1, NST suspends at startup waiting for a diagnostic
       # client (dotnet-trace) on /tmp/nst-diag.sock. Used to profile cold boot.
       BC_PROFILE_NST: ${BC_PROFILE_NST:-0}
+      # Diagnostic only — when set, the StartupHook reporting proxy writes
+      # report render payloads for local renderer investigation.
+      BC_REPORTING_DUMP_DIR: ${BC_REPORTING_DUMP_DIR:-}
       BC_ARTIFACT_URL: ${BC_ARTIFACT_URL:-}
       BC_TEST_APPS: ${BC_TEST_APPS:-}
       SQL_SERVER: sql

@@ -1,14 +1,20 @@
 // Stub implementations for Windows P/Invoke functions used by BC service tier on Linux.
 // Compiled to libwin32_stubs.so and loaded via NativeLibrary.ResolvingUnmanagedDll.
 // Provides no-op/stub implementations for: kernel32, user32, Wintrust, nclcsrts,
-// dhcpcsvc, Netapi32, ntdsapi, rpcrt4, advapi32.
+// dhcpcsvc, Netapi32, ntdsapi, rpcrt4, advapi32, crypt32.
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 typedef intptr_t HANDLE;
+
+typedef struct {
+    uint32_t cbData;
+    uint8_t* pbData;
+} DATA_BLOB;
 
 // =============================================================================
 // kernel32.dll
@@ -24,6 +30,47 @@ int CloseHandle(HANDLE h) { return 1; }
 
 // --- Memory info ---
 int GetPhysicallyInstalledSystemMemory(int64_t* totalKB) { *totalKB = 16 * 1024 * 1024; return 1; }
+
+// LocalAlloc/LocalFree are used by ReportViewer's local data-protection helpers.
+// LMEM_ZEROINIT is the only flag that changes behavior relevant to callers here.
+HANDLE LocalAlloc(uint32_t flags, uintptr_t bytes) {
+    void* p = (flags & 0x0040) ? calloc(1, bytes) : malloc(bytes);
+    return (HANDLE)p;
+}
+
+HANDLE LocalFree(HANDLE h) {
+    free((void*)h);
+    return 0;
+}
+
+static int copy_data_blob(const DATA_BLOB* in, DATA_BLOB* out) {
+    if (out == 0 || in == 0) return 0;
+    out->cbData = in->cbData;
+    if (in->cbData == 0) {
+        out->pbData = (uint8_t*)LocalAlloc(0, 1);
+        return out->pbData != 0;
+    }
+    out->pbData = (uint8_t*)LocalAlloc(0, in->cbData);
+    if (out->pbData == 0) return 0;
+    memcpy(out->pbData, in->pbData, in->cbData);
+    return 1;
+}
+
+// --- crypt32 data protection ---
+// ReportViewer protects transient local-processing strings. In this container
+// there is no Windows DPAPI; copy the blob so same-process consumers can proceed.
+int CryptProtectData(DATA_BLOB* dataIn, const uint16_t* description, DATA_BLOB* optionalEntropy,
+                     void* reserved, void* promptStruct, uint32_t flags, DATA_BLOB* dataOut) {
+    (void)description; (void)optionalEntropy; (void)reserved; (void)promptStruct; (void)flags;
+    return copy_data_blob(dataIn, dataOut);
+}
+
+int CryptUnprotectData(DATA_BLOB* dataIn, uint16_t** description, DATA_BLOB* optionalEntropy,
+                       void* reserved, void* promptStruct, uint32_t flags, DATA_BLOB* dataOut) {
+    (void)optionalEntropy; (void)reserved; (void)promptStruct; (void)flags;
+    if (description) *description = 0;
+    return copy_data_blob(dataIn, dataOut);
+}
 
 typedef struct {
     uint32_t dwLength;
@@ -64,6 +111,11 @@ int QueryPerformanceCounter(int64_t* ticks) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     *ticks = ts.tv_sec * 1000000000LL + ts.tv_nsec;
+    return 1;
+}
+
+int QueryPerformanceFrequency(int64_t* frequency) {
+    *frequency = 1000000000LL;
     return 1;
 }
 

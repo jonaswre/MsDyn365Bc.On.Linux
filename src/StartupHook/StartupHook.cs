@@ -232,12 +232,13 @@ internal class StartupHook
         if (name == "Microsoft.Dynamics.Nav.Ncl")
         {
             PatchALDatabaseALSid(args.LoadedAssembly);
-            // Patch #19: Set CustomReportingServiceClient to no-op factory.
+            // Patch #19: Set CustomReportingServiceClient.
             //   BC's Reporting Service is a Windows PE binary that can't run on Linux.
             //   When test code triggers RDLC rendering, BC tries to connect to the
             //   Reporting Service via gRPC, times out, and crashes the test codeunit.
             //   NavEnvironment has a built-in hook: CustomReportingServiceClient.
-            //   Setting it to a no-op factory bypasses gRPC entirely.
+            //   In full reporting mode, point it at the Wine-backed Linux sidecar.
+            //   Otherwise, keep the no-op client used by parity discovery workflows.
             PatchReportingServiceClient(args.LoadedAssembly);
         }
 
@@ -1099,7 +1100,7 @@ internal class StartupHook
     // BC checks before trying to connect to the gRPC Reporting Service.
     // We set it to return a no-op proxy, preventing the gRPC timeout crash.
     // ========================================================================
-    private static object? _noopReportingClient;
+    private static object? _reportingClient;
     private static bool _reportingClientPatched;
 
     private static void PatchReportingServiceClient(Assembly navNcl)
@@ -1107,7 +1108,7 @@ internal class StartupHook
         // NavEnvironment.Instance may not be initialized yet — retry on a timer
         var timer = new System.Threading.Timer(_ =>
         {
-            try { TrySetNoOpReportingClient(navNcl); }
+            try { TrySetReportingClient(navNcl); }
             catch (Exception ex)
             {
                 if (!_reportingClientPatched)
@@ -1116,7 +1117,7 @@ internal class StartupHook
         }, null, TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(1));
     }
 
-    private static void TrySetNoOpReportingClient(Assembly navNcl)
+    private static void TrySetReportingClient(Assembly navNcl)
     {
         if (_reportingClientPatched) return;
 
@@ -1164,11 +1165,13 @@ internal class StartupHook
             return;
         }
 
-        // Create a no-op proxy via DispatchProxy
-        _noopReportingClient = typeof(System.Reflection.DispatchProxy)
-            .GetMethod("Create", 2, Type.EmptyTypes)!
-            .MakeGenericMethod(iClientType, typeof(NoOpReportingProxy))
-            .Invoke(null, null);
+        bool wineReportingEnabled = IsTruthy(Environment.GetEnvironmentVariable("BC_ENABLE_WINE_REPORTING"));
+        _reportingClient = wineReportingEnabled
+            ? CreateWineReportingClient(clientAsm, baseDir)
+            : typeof(System.Reflection.DispatchProxy)
+                .GetMethod("Create", 2, Type.EmptyTypes)!
+                .MakeGenericMethod(iClientType, typeof(NoOpReportingProxy))
+                .Invoke(null, null);
 
         // Build the Func delegate matching the field's type and set it
         if (field != null)
@@ -1182,7 +1185,7 @@ internal class StartupHook
                 typeof(StartupHook).Module, skipVisibility: true);
             var il = dm.GetILGenerator();
             il.Emit(System.Reflection.Emit.OpCodes.Ldsfld,
-                typeof(StartupHook).GetField(nameof(_noopReportingClient),
+                typeof(StartupHook).GetField(nameof(_reportingClient),
                     BindingFlags.Static | BindingFlags.NonPublic)!);
             il.Emit(System.Reflection.Emit.OpCodes.Ret);
             var factoryDelegate = dm.CreateDelegate(fieldType);
@@ -1190,7 +1193,40 @@ internal class StartupHook
         }
 
         _reportingClientPatched = true;
-        Console.WriteLine("[StartupHook] Patch #19: CustomReportingServiceClient → no-op proxy");
+        Console.WriteLine(wineReportingEnabled
+            ? "[StartupHook] Patch #19: CustomReportingServiceClient → Wine reporting sidecar"
+            : "[StartupHook] Patch #19: CustomReportingServiceClient → no-op proxy");
+    }
+
+    private static object CreateWineReportingClient(Assembly clientAsm, string baseDir)
+    {
+        string commonDll = Path.Combine(baseDir, "Microsoft.BusinessCentral.Reporting.Common.dll");
+        if (!File.Exists(commonDll))
+            commonDll = Path.Combine(baseDir, "SideServices", "Microsoft.BusinessCentral.Reporting.Common.dll");
+        Assembly commonAsm = Assembly.LoadFrom(commonDll);
+
+        Type factoryType = commonAsm.GetType("Microsoft.BusinessCentral.Reporting.Common.LocalhostCommunicationFactory")
+            ?? throw new InvalidOperationException("LocalhostCommunicationFactory not found");
+        Type grpcClientType = clientAsm.GetType("Microsoft.BusinessCentral.Reporting.Client.ReportingServiceGrpcClient")
+            ?? throw new InvalidOperationException("ReportingServiceGrpcClient not found");
+
+        int port = 17778;
+        string? configuredPort = Environment.GetEnvironmentVariable("BC_REPORTING_GRPC_PORT");
+        if (!string.IsNullOrWhiteSpace(configuredPort) && !int.TryParse(configuredPort, out port))
+            throw new InvalidOperationException($"Invalid BC_REPORTING_GRPC_PORT value '{configuredPort}'");
+
+        object communicationFactory = Activator.CreateInstance(factoryType, port)
+            ?? throw new InvalidOperationException("Could not create LocalhostCommunicationFactory");
+        return Activator.CreateInstance(grpcClientType, communicationFactory)
+            ?? throw new InvalidOperationException("Could not create ReportingServiceGrpcClient");
+    }
+
+    private static bool IsTruthy(string? value)
+    {
+        return value != null &&
+            (value.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+             value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+             value.Equals("yes", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -1204,6 +1240,7 @@ internal class StartupHook
             if (targetMethod == null) return null;
 
             Console.WriteLine($"[StartupHook] NoOp IReportingServiceClient.{targetMethod.Name}()");
+            DumpReportingInvocation(targetMethod, args);
 
             var rt = targetMethod.ReturnType;
             if (rt == typeof(ValueTask)) return ValueTask.CompletedTask;
@@ -1221,6 +1258,51 @@ internal class StartupHook
             }
 
             return null;
+        }
+
+        private static void DumpReportingInvocation(MethodInfo targetMethod, object?[]? args)
+        {
+            string? dumpDir = Environment.GetEnvironmentVariable("BC_REPORTING_DUMP_DIR");
+            if (string.IsNullOrWhiteSpace(dumpDir) || args == null)
+                return;
+
+            try
+            {
+                string invocationDir = Path.Combine(
+                    dumpDir,
+                    $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{targetMethod.Name}-{Environment.CurrentManagedThreadId}");
+                Directory.CreateDirectory(invocationDir);
+
+                File.WriteAllText(
+                    Path.Combine(invocationDir, "method.txt"),
+                    targetMethod.ToString() + Environment.NewLine);
+
+                for (int index = 0; index < args.Length; index++)
+                {
+                    object? arg = args[index];
+                    switch (arg)
+                    {
+                        case byte[] bytes:
+                            File.WriteAllBytes(Path.Combine(invocationDir, $"arg{index}.bin"), bytes);
+                            break;
+                        case byte[][] chunks:
+                            Directory.CreateDirectory(Path.Combine(invocationDir, $"arg{index}"));
+                            for (int chunkIndex = 0; chunkIndex < chunks.Length; chunkIndex++)
+                                File.WriteAllBytes(Path.Combine(invocationDir, $"arg{index}", $"chunk{chunkIndex}.bin"), chunks[chunkIndex]);
+                            break;
+                        case null:
+                            File.WriteAllText(Path.Combine(invocationDir, $"arg{index}.txt"), "<null>" + Environment.NewLine);
+                            break;
+                        default:
+                            File.WriteAllText(Path.Combine(invocationDir, $"arg{index}.txt"), arg.ToString() + Environment.NewLine);
+                            break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[StartupHook] Report dump failed: {ex.GetType().Name}: {ex.Message}");
+            }
         }
     }
 

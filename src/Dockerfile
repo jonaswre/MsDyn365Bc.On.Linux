@@ -14,6 +14,7 @@ RUN cp /build/src/stubs/DrawingStub/bin/Release/net8.0/System.Drawing.Common.dll
 # Publish tools
 RUN cd src/tools/MergeNetstandard && dotnet publish -c Release -o /build/output/tools 2>&1 | tail -3
 RUN cd src/tools/PatchNclTestPage && dotnet publish -c Release -o /build/output/tools/patcher 2>&1 | tail -3
+RUN cd src/tools/PatchReportViewerLinux && dotnet publish -c Release -o /build/output/tools/reportviewer 2>&1 | tail -3
 
 # Copy .NET 8 reference assemblies from SDK (needed for Cecil type resolution)
 RUN mkdir -p /build/output/refasm && \
@@ -26,14 +27,22 @@ FROM --platform=linux/amd64 mcr.microsoft.com/dotnet/aspnet:8.0
 
 # Install tools for artifact download and SQL setup + en_US locale
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl unzip python3 gnupg locales && \
+        curl unzip python3 gnupg locales \
+        wine wine64 wine64-preloader mono-devel libgdiplus fontconfig \
+        fonts-dejavu-core fonts-liberation fonts-crosextra-carlito && \
     sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen && locale-gen && \
     curl -sSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" > /etc/apt/sources.list.d/mssql.list && \
     ACCEPT_EULA=Y apt-get update && ACCEPT_EULA=Y apt-get install -y --no-install-recommends mssql-tools18 && \
+    curl -fsSL -o /tmp/wine-mono-7.4.0-x86.msi https://dl.winehq.org/wine/wine-mono/7.4.0/wine-mono-7.4.0-x86.msi && \
+    WINEDEBUG=-all wine msiexec /i /tmp/wine-mono-7.4.0-x86.msi && \
+    mkdir -p /root/.wine/drive_c/windows/Fonts && \
+    cp /usr/share/fonts/truetype/dejavu/*.ttf /root/.wine/drive_c/windows/Fonts/ && \
+    cp /usr/share/fonts/truetype/liberation/*.ttf /root/.wine/drive_c/windows/Fonts/ && \
+    fc-cache -f && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /bc/hook /bc/patched /bc/refasm /bc/addins-overlay /bc/testrunner /bc/service /bc/artifacts /bc/scripts /bc/tools
+RUN mkdir -p /bc/hook /bc/patched /bc/refasm /bc/addins-overlay /bc/testrunner /bc/service /bc/artifacts /bc/scripts /bc/tools /bc/reporting
 
 # Copy built artifacts from builder
 COPY --from=builder /build/output/hook/ /bc/hook/
@@ -44,6 +53,10 @@ COPY --from=builder /build/output/DrawingStub.dll /bc/addins-overlay/System.Draw
 # Copy scripts
 COPY scripts/ /bc/scripts/
 RUN chmod +x /bc/scripts/*.sh
+
+# Copy Linux/Wine reporting sidecar source. It is compiled after BC artifacts are
+# downloaded because it references version-matched Microsoft reporting assemblies.
+COPY src/reporting/LinuxReportingService.cs /bc/reporting/LinuxReportingService.cs
 
 # Copy test runner extension (REST API for test execution)
 COPY extensions/TestRunnerExtension/MicrosoftTestRunnerPatched.app /bc/testrunner/MicrosoftTestRunnerPatched.app
