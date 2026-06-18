@@ -39,6 +39,13 @@ class ReportViewerLinuxPatchTests(unittest.TestCase):
         self.assertIn("wine \"$REPORTING_EXE\" \"$BC_REPORTING_GRPC_PORT\"", entrypoint)
         self.assertIn("/tmp/linux-reporting-service.log", entrypoint)
 
+    def test_entrypoint_exposes_grpc_native_extension_for_reporting_client(self):
+        entrypoint = Path("scripts/entrypoint.sh").read_text(encoding="utf-8")
+
+        self.assertIn("SideServices/libgrpc_csharp_ext.x64.so", entrypoint)
+        self.assertIn("$SERVICE_DIR/libgrpc_csharp_ext.x64.so", entrypoint)
+        self.assertIn("Copied gRPC native extension for reporting client", entrypoint)
+
     def test_linux_reporting_sidecar_has_required_rendering_paths(self):
         source = Path("src/reporting/LinuxReportingService.cs").read_text(encoding="utf-8")
 

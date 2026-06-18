@@ -389,6 +389,15 @@ if [ -f /bc/tools/reportviewer/PatchReportViewerLinux.dll ] && [ -f "$SERVICE_DI
     fi
 fi
 
+# The BC service tier loads Microsoft.BusinessCentral.Reporting.Client.dll from
+# $SERVICE_DIR, so Grpc.Core probes for its native Linux extension there. The
+# artifact ships the Linux native extension under SideServices; expose it at the
+# root as well so the in-process reporting client can create its channel.
+if [ -f "$SERVICE_DIR/SideServices/libgrpc_csharp_ext.x64.so" ] && [ ! -f "$SERVICE_DIR/libgrpc_csharp_ext.x64.so" ]; then
+    cp "$SERVICE_DIR/SideServices/libgrpc_csharp_ext.x64.so" "$SERVICE_DIR/libgrpc_csharp_ext.x64.so"
+    log_step "Copied gRPC native extension for reporting client"
+fi
+
 BC_ENABLE_WINE_REPORTING="${BC_ENABLE_WINE_REPORTING:-true}"
 BC_REPORTING_GRPC_PORT="${BC_REPORTING_GRPC_PORT:-17778}"
 export BC_ENABLE_WINE_REPORTING BC_REPORTING_GRPC_PORT
