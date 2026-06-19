@@ -1,19 +1,16 @@
 name: Build and push bc-runner image
 
 on:
-  push:
-    branches: [master]
-    paths:
-      - '.github/workflows/build-image.yml'
-      - 'src/**'
-      - 'scripts/**'
-      - 'extensions/**'
   workflow_dispatch:
     inputs:
       push_image:
         description: "Push the built bc-runner image to GHCR"
         required: false
         default: "false"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io

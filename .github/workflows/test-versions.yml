@@ -25,10 +25,14 @@ on:
   pull_request:
     branches: [main, master]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
-  # Needed to pull runner_image from GHCR in reusable workflow/test jobs.
-  packages: read
+  # Needed to push the SHA image on branch builds and pull images in test jobs.
+  packages: write
 
 jobs:
   prepare:
@@ -89,8 +93,8 @@ jobs:
 
   build-image:
     # Build the bc-runner image from THIS commit as a compile/smoke check,
-    # but never push it from this workflow. test-versions consumes an existing
-    # repository image tag for runtime execution.
+    # then push a SHA tag for branch builds. Pull requests still build without
+    # pushing and consume the current latest image for runtime execution.
     runs-on: ubuntu-latest
     outputs:
       runner_image: ${{ steps.select-image.outputs.runner_image }}
@@ -103,7 +107,16 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Build BC runner image (no push)
+    - name: Log in to GHCR
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build BC runner image (pull request, no push)
+      if: github.event_name == 'pull_request'
       uses: docker/build-push-action@v6
       with:
         context: .
@@ -113,12 +126,25 @@ jobs:
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
+    - name: Build and push SHA image
+      if: github.event_name != 'pull_request'
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: src/Dockerfile
+        push: true
+        tags: ${{ env.IMAGE }}:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
     - id: select-image
       name: Select runner image reference
-      # The build job verifies the current commit still builds successfully.
-      # The matrix/container test jobs intentionally run against the latest
-      # published runner image because this workflow does not push.
-      run: echo "runner_image=${{ env.IMAGE }}:latest" >> "$GITHUB_OUTPUT"
+      run: |
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          echo "runner_image=${{ env.IMAGE }}:latest" >> "$GITHUB_OUTPUT"
+        else
+          echo "runner_image=${{ env.IMAGE }}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+        fi
 
   # ─── Matrix validation: each BC version runs through the canonical
   #     reusable workflow with the smoke test extension. The reusable workflow
@@ -169,16 +195,14 @@ jobs:
       preprocessor_symbols: "SMOKE"
 
   # Exercises the container's own artifact download path (no pre-cached
-  # artifacts). Verifies the in-container download feature and lets us
-  # measure download speed directly. Runs once (BC 28.1) in parallel
-  # with the main matrix. Doesn't fit the reusable workflow pattern
-  # because the reusable workflow always pre-downloads artifacts on
-  # the host.
+  # artifacts) and the no-test-toolkit startup mode in one BC startup.
+  # Doesn't fit the reusable workflow pattern because the reusable workflow
+  # always pre-downloads artifacts on the host.
   test-container-download:
     needs: [build-image]
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    name: Container download test (BC 28.2)
+    name: Container download without test toolkit (BC 28.2)
 
     steps:
     - uses: actions/checkout@v4
@@ -193,12 +217,13 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Start BC (in-container artifact download)
+    - name: Start BC with in-container artifact download and no test toolkit
       # BC_ARTIFACTS_DIR is intentionally NOT set so docker-compose uses a named
       # volume (bc-artifacts) which starts empty — forcing the entrypoint to
       # download artifacts itself. This validates the container download feature.
       env:
         BC_VERSION: "28.2"
+        BC_INCLUDE_TEST_TOOLKIT: "false"
         BC_RUNNER_IMAGE: ${{ needs.build-image.outputs.runner_image }}
       run: |
         STEP_START=$(date +%s)
@@ -207,6 +232,8 @@ jobs:
         # in-container artifact download (~3 min) + BC boot (~3-5 min).
         ./scripts/wait-for-bc-healthy.sh 30
         ./scripts/verify-network-surface.sh
+        docker compose logs bc 2>&1 \
+          | grep -q "BC_INCLUDE_TEST_TOOLKIT=false: skipped test toolkit publishing"
         echo "TOTAL_DURATION=$(($(date +%s) - STEP_START))" >> $GITHUB_ENV
 
     - name: Download timing summary
@@ -216,41 +243,6 @@ jobs:
         docker compose logs bc 2>&1 | grep "\[artifacts\]"
         echo ""
         echo "Total start time (download + DB restore + BC startup): ${TOTAL_DURATION:-n/a}s"
-
-  test-no-test-toolkit:
-    needs: [build-image]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    name: No test toolkit startup (BC 28.2)
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set lowercase image name
-      run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/bc-runner" >> $GITHUB_ENV
-
-    - name: Log in to GHCR
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Start BC without test toolkit
-      env:
-        BC_VERSION: "28.2"
-        BC_INCLUDE_TEST_TOOLKIT: "false"
-        BC_RUNNER_IMAGE: ${{ needs.build-image.outputs.runner_image }}
-      run: |
-        docker compose up -d 2>&1 | tail -10
-        ./scripts/wait-for-bc-healthy.sh 30
-        ./scripts/verify-network-surface.sh
-        docker compose logs bc 2>&1 \
-          | grep -q "BC_INCLUDE_TEST_TOOLKIT=false: skipped test toolkit publishing"
-
-    - name: BC logs
-      if: failure()
-      run: docker compose logs bc 2>&1 | tail -200
 
   test-webclient:
     needs: [build-image]
@@ -355,3 +347,27 @@ jobs:
     - name: SQL log excerpt
       if: failure()
       run: docker compose logs sql 2>&1 | tail -50
+
+  publish-latest:
+    needs: [test, test-container-download, test-webclient, test-macos-overlay]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Set lowercase image name
+      run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/bc-runner" >> $GITHUB_ENV
+
+    - name: Log in to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Promote validated SHA image to latest
+      run: |
+        docker buildx imagetools create \
+          -t "${IMAGE}:latest" \
+          "${IMAGE}:${{ github.sha }}"

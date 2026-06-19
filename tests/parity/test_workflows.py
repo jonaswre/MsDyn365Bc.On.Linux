@@ -125,27 +125,71 @@ class ParityWorkflowTests(unittest.TestCase):
 
     def test_test_versions_has_bc28_container_capability_jobs(self):
         workflow = self.versions_workflow()
-        no_toolkit = workflow["jobs"]["test-no-test-toolkit"]
         webclient = workflow["jobs"]["test-webclient"]
         container_download = workflow["jobs"]["test-container-download"]
         macos = workflow["jobs"]["test-macos-overlay"]
         scripts = "\n".join(
             step.get("run", "")
-            for job in (no_toolkit, webclient, container_download, macos)
+            for job in (webclient, container_download, macos)
             for step in job["steps"]
         )
-        no_toolkit_start = next(step for step in no_toolkit["steps"] if step.get("name") == "Start BC without test toolkit")
+        container_download_start = None
+        for step in container_download["steps"]:
+            if step.get("name") == "Start BC with in-container artifact download and no test toolkit":
+                container_download_start = step
+                break
+        self.assertIsNotNone(container_download_start)
         webclient_start = next(step for step in webclient["steps"] if step.get("name") == "Start BC with web client")
 
-        self.assertEqual("No test toolkit startup (BC 28.2)", no_toolkit["name"])
+        self.assertNotIn("test-no-test-toolkit", workflow["jobs"])
         self.assertEqual("Web client opt-in (BC 28.2)", webclient["name"])
-        self.assertEqual("Container download test (BC 28.2)", container_download["name"])
+        self.assertEqual("Container download without test toolkit (BC 28.2)", container_download["name"])
         self.assertEqual("macOS overlay test (BC 28.2)", macos["name"])
-        self.assertEqual("false", no_toolkit_start["env"]["BC_INCLUDE_TEST_TOOLKIT"])
+        self.assertEqual("false", container_download_start["env"]["BC_INCLUDE_TEST_TOOLKIT"])
         self.assertEqual("1", webclient_start["env"]["BC_WEBCLIENT"])
         self.assertIn("BC_INCLUDE_TEST_TOOLKIT=false: skipped test toolkit publishing", scripts)
         self.assertIn("BC_WEBCLIENT=1: starting web client", scripts)
         self.assertNotIn('BC_VERSION: "27.', str(workflow["jobs"]))
+
+    def test_primary_workflows_cancel_stale_runs(self):
+        for workflow in (
+            self.versions_workflow(),
+            self.build_image_workflow(),
+            self.workflow(),
+        ):
+            concurrency = workflow["concurrency"]
+            self.assertEqual("${{ github.workflow }}-${{ github.ref }}", concurrency["group"])
+            self.assertTrue(concurrency["cancel-in-progress"])
+
+    def test_test_versions_uses_current_sha_image_on_push(self):
+        workflow = self.versions_workflow()
+        job = workflow["jobs"]["build-image"]
+        steps = job["steps"]
+        push_step = next(step for step in steps if step.get("name") == "Build and push SHA image")
+        select_step = next(step for step in steps if step.get("id") == "select-image")
+        test_job = workflow["jobs"]["test"]
+
+        self.assertEqual("write", workflow["permissions"]["packages"])
+        self.assertEqual("${{ steps.select-image.outputs.runner_image }}", job["outputs"]["runner_image"])
+        self.assertIn("github.event_name != 'pull_request'", push_step["if"])
+        self.assertTrue(push_step["with"]["push"])
+        self.assertIn("${{ env.IMAGE }}:${{ github.sha }}", push_step["with"]["tags"])
+        self.assertIn("runner_image=${{ env.IMAGE }}:${{ github.sha }}", select_step["run"])
+        self.assertEqual("${{ needs.build-image.outputs.runner_image }}", test_job["with"]["runner_image"])
+
+    def test_test_versions_promotes_latest_after_validation(self):
+        workflow = self.versions_workflow()
+        promote = workflow["jobs"]["publish-latest"]
+
+        self.assertEqual(
+            ["test", "test-container-download", "test-webclient", "test-macos-overlay"],
+            promote["needs"],
+        )
+        self.assertIn("github.event_name != 'pull_request'", promote["if"])
+        script = "\n".join(step.get("run", "") for step in promote["steps"])
+        self.assertIn("docker buildx imagetools create", script)
+        self.assertIn("${IMAGE}:${{ github.sha }}", script)
+        self.assertIn("${IMAGE}:latest", script)
 
     def test_parity_workflow_defaults_to_bc28_only(self):
         workflow = self.workflow()
@@ -292,10 +336,11 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertEqual("type=gha", build_only["with"]["cache-from"])
         self.assertEqual("type=gha,mode=max", build_only["with"]["cache-to"])
 
-    def test_build_image_workflow_runs_when_it_changes(self):
+    def test_build_image_workflow_is_manual_only_to_avoid_duplicate_push_builds(self):
         workflow = self.build_image_workflow()
 
-        self.assertIn(".github/workflows/build-image.yml", workflow[True]["push"]["paths"])
+        self.assertIn("workflow_dispatch", workflow[True])
+        self.assertNotIn("push", workflow[True])
 
     def _build_image_step(self, name):
         steps = self.build_image_workflow()["jobs"]["build-push"]["steps"]

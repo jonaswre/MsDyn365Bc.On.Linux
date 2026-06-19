@@ -82,6 +82,16 @@ class CompareContractsTests(unittest.TestCase):
 
         self.assertEqual([], result.unexpected)
 
+    def test_test_result_mismatch_is_reported(self):
+        linux = base_contract("linux")
+        windows = base_contract("windows")
+        linux["tests"]["total"] = 3
+        linux["tests"]["passed"] = 3
+
+        result = compare_contracts(linux, windows, [])
+
+        self.assertEqual(["tests.passed", "tests.total"], [diff["path"] for diff in result.unexpected])
+
     def test_unexpected_value_difference_is_reported(self):
         linux = base_contract("linux")
         windows = base_contract("windows")
