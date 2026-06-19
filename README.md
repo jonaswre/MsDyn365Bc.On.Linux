@@ -26,7 +26,8 @@ tags the same ref locally, so it then takes precedence over the pull — run
 When the command returns, BC is running with a CRONUS demo database, dev
 endpoint, SOAP, OData, API, and the test toolkit (Test Runner, Library Assert,
 Variable Storage, Permissions Mock, Any, System Application Test Library,
-Business Foundation Test Libraries, Tests-TestLibraries) all published —
+Business Foundation Test Libraries, Application Test Library,
+Tests-TestLibraries) all published —
 ready for extension development and testing.
 
 `docker compose up -d --wait` uses the container healthcheck, which probes the

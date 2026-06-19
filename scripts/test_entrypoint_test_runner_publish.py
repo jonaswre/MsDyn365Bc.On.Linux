@@ -9,6 +9,7 @@ REPO_DIR = pathlib.Path(__file__).resolve().parents[1]
 ENTRYPOINT = REPO_DIR / "scripts" / "entrypoint.sh"
 DOCKERFILE = REPO_DIR / "src" / "Dockerfile"
 COMPOSE_FILE = REPO_DIR / "docker-compose.yml"
+WAIT_FOR_BC_HEALTHY = REPO_DIR / "scripts" / "wait-for-bc-healthy.sh"
 
 
 class EntrypointTestRunnerPublishTests(unittest.TestCase):
@@ -52,6 +53,17 @@ class EntrypointTestRunnerPublishTests(unittest.TestCase):
         text = ENTRYPOINT.read_text(encoding="utf-8")
         self.assertIn("resolve-test-runner-app.py", text)
         self.assertNotIn("TestRunnerExtension", text)
+
+    def test_default_test_toolkit_includes_application_test_library(self) -> None:
+        text = ENTRYPOINT.read_text(encoding="utf-8")
+
+        self.assertIn('"Application Test Library"', text)
+
+    def test_wait_for_health_fails_fast_on_required_publish_failures(self) -> None:
+        text = WAIT_FOR_BC_HEALTHY.read_text(encoding="utf-8")
+
+        self.assertIn("required publish failed", text)
+        self.assertIn("fatal entrypoint error", text)
 
 
 if __name__ == "__main__":

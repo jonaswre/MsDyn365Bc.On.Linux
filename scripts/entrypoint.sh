@@ -1380,12 +1380,13 @@ apps = load_artifact_apps(sys.argv[1])
 # apps that aren't in the default database but most test apps depend on.
 # Test Runner is installed later from the selected BC artifact tree so runtime
 # compatibility follows BC_VERSION instead of the baked image build.
-# This list rarely changes — last change was ~5 years ago.
+# Keep this aligned with the Microsoft test toolkit dependency surface in
+# current BC artifacts.
 NAMES = {
     "Library Assert", "Library Variable Storage",
     "Permissions Mock", "Any",
     "System Application Test Library", "Business Foundation Test Libraries",
-    "Tests-TestLibraries",
+    "Application Test Library", "Tests-TestLibraries",
 }
 by_name = {}
 for aid, info in apps.items():

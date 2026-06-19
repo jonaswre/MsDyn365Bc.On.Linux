@@ -78,12 +78,19 @@ for i in $(seq 1 "$MAX_ITER"); do
         exit 1
     fi
 
+    RECENT_ENTRYPOINT_LOGS=$(docker compose logs --tail=200 bc 2>&1 | grep -E '\[entrypoint\]' || true)
+    if printf "%s\n" "$RECENT_ENTRYPOINT_LOGS" | grep -qiE 'ERROR: required publish failed|ERROR: Microsoft Test Runner app was not found|ERROR: BC process died'; then
+        echo "ERROR: fatal entrypoint error while waiting for BC"
+        print_failure_context "$CID"
+        exit 1
+    fi
+
     # Print a progress line every ~60 seconds so callers can see what
     # BC's entrypoint is currently doing instead of staring at silence.
     NOW=$(date +%s)
     if [ $((NOW - LAST_PROGRESS)) -ge 60 ]; then
         ELAPSED=$((NOW - START_TIME))
-        LAST_LOG=$(docker compose logs bc 2>&1 | grep -E '\[entrypoint\]' | tail -1 | sed 's/^bc-1[[:space:]]*|[[:space:]]*//')
+        LAST_LOG=$(printf "%s\n" "$RECENT_ENTRYPOINT_LOGS" | tail -1 | sed 's/^bc-1[[:space:]]*|[[:space:]]*//')
         echo "  ${ELAPSED}s — status=${STATUS}${LAST_LOG:+ — $LAST_LOG}"
         LAST_PROGRESS=$NOW
     fi
