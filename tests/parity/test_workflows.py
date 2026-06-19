@@ -165,16 +165,19 @@ class ParityWorkflowTests(unittest.TestCase):
         workflow = self.versions_workflow()
         job = workflow["jobs"]["build-image"]
         steps = job["steps"]
+        publish_step = next(step for step in steps if step.get("id") == "publish")
         push_step = next(step for step in steps if step.get("name") == "Build and push SHA image")
         select_step = next(step for step in steps if step.get("id") == "select-image")
         test_job = workflow["jobs"]["test"]
 
         self.assertEqual("write", workflow["permissions"]["packages"])
         self.assertEqual("${{ steps.select-image.outputs.runner_image }}", job["outputs"]["runner_image"])
-        self.assertIn("github.event_name != 'pull_request'", push_step["if"])
+        self.assertIn("StefanMaron/MsDyn365Bc.On.Linux", publish_step["run"])
+        self.assertEqual("steps.publish.outputs.enabled == 'true'", push_step["if"])
         self.assertTrue(push_step["with"]["push"])
         self.assertIn("${{ env.IMAGE }}:${{ github.sha }}", push_step["with"]["tags"])
         self.assertIn("runner_image=${{ env.IMAGE }}:${{ github.sha }}", select_step["run"])
+        self.assertIn("runner_image=${{ env.IMAGE }}:latest", select_step["run"])
         self.assertEqual("${{ needs.build-image.outputs.runner_image }}", test_job["with"]["runner_image"])
 
     def test_test_versions_promotes_latest_after_validation(self):
@@ -186,6 +189,7 @@ class ParityWorkflowTests(unittest.TestCase):
             promote["needs"],
         )
         self.assertIn("github.event_name != 'pull_request'", promote["if"])
+        self.assertIn("StefanMaron/MsDyn365Bc.On.Linux", promote["if"])
         script = "\n".join(step.get("run", "") for step in promote["steps"])
         self.assertIn("docker buildx imagetools create", script)
         self.assertIn("${IMAGE}:${{ github.sha }}", script)
