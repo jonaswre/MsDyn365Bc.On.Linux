@@ -9,6 +9,10 @@ class ParityWorkflowTests(unittest.TestCase):
         path = Path(".github/workflows/parity-windows-linux.yml")
         return yaml.safe_load(path.read_text(encoding="utf-8"))
 
+    def build_image_workflow(self):
+        path = Path(".github/workflows/build-image.yml")
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
+
     def linux_contract_job(self):
         return self.workflow()["jobs"]["linux-contract"]
 
@@ -208,6 +212,26 @@ class ParityWorkflowTests(unittest.TestCase):
 
         self.assertIn("needs.linux-contract.result == 'success'", compare["if"])
         self.assertIn("needs.windows-contract.result == 'success'", compare["if"])
+
+    def test_build_image_push_is_explicitly_opt_in(self):
+        workflow = self.build_image_workflow()
+        dispatch = workflow[True]["workflow_dispatch"]
+        push_input = dispatch["inputs"]["push_image"]
+
+        self.assertEqual("false", push_input["default"])
+        self.assertIn("steps.publish.outputs.enabled == 'true'", self._build_image_step("Log in to GHCR")["if"])
+        self.assertIn("steps.publish.outputs.enabled == 'true'", self._build_image_step("Build and push image")["if"])
+
+    def test_build_image_push_fallback_builds_without_registry_write(self):
+        build_only = self._build_image_step("Build image")
+
+        self.assertFalse(build_only["with"]["push"])
+        self.assertEqual("type=gha", build_only["with"]["cache-from"])
+        self.assertEqual("type=gha,mode=max", build_only["with"]["cache-to"])
+
+    def _build_image_step(self, name):
+        steps = self.build_image_workflow()["jobs"]["build-push"]["steps"]
+        return next(step for step in steps if step.get("name") == name)
 
 
 if __name__ == "__main__":
