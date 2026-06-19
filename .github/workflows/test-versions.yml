@@ -370,6 +370,14 @@ jobs:
         al --help
         al workspace compile --help
         al publishapp --help
+        ALTOOL_DLL=$(find "$HOME/.nuget/packages/microsoft.dynamics.businesscentral.development.tools/17.0.34.45391" \
+          -path "*/tools/net8.0/any/altool.dll" -type f | sort | tail -1)
+        if [ -z "$ALTOOL_DLL" ]; then
+          echo "ERROR: could not locate altool.dll in the official package"
+          exit 1
+        fi
+        echo "ALTOOL_DLL=$ALTOOL_DLL" >> "$GITHUB_ENV"
+        dotnet "$ALTOOL_DLL" --version
 
     - name: Download artifacts, stage symbols, and start BC
       env:
@@ -399,7 +407,7 @@ jobs:
 
         PLATFORM_VERSION=$(python3 -c "import json; print(json.load(open('$BC_ARTIFACTS_DIR/app/manifest.json'))['platform'])")
         PLATFORM_MAJOR_MINOR=$(echo "$PLATFORM_VERSION" | cut -d. -f1,2)
-        RUNTIME_VERSION=$(al GetLatestSupportedRuntimeVersion "$PLATFORM_MAJOR_MINOR" | tr -d '\r\n')
+        RUNTIME_VERSION=$(dotnet "$ALTOOL_DLL" GetLatestSupportedRuntimeVersion "$PLATFORM_MAJOR_MINOR" | tr -d '\r\n')
         echo "Official AL tool selected runtime $RUNTIME_VERSION for platform $PLATFORM_MAJOR_MINOR"
         python3 - extensions/minimal-test/app.json "$RUNTIME_VERSION" <<'PY'
         import json
@@ -437,7 +445,7 @@ jobs:
       run: |
         set -e
         mkdir -p official-build official-logs
-        al workspace compile official-altool-smoke.code-workspace \
+        dotnet "$ALTOOL_DLL" workspace compile official-altool-smoke.code-workspace \
           --packagecachepath "$(pwd)/official-symbols" \
           --outfolder "$(pwd)/official-build" \
           --maxcpucount 1 \
@@ -451,11 +459,11 @@ jobs:
           exit 1
         fi
         echo "Official AL tool built: $APP"
-        al GetPackageManifest "$APP"
+        dotnet "$ALTOOL_DLL" GetPackageManifest "$APP"
 
         ./scripts/wait-for-bc-healthy.sh 30
         ./scripts/verify-network-surface.sh
-        al publishapp "$APP" \
+        dotnet "$ALTOOL_DLL" publishapp "$APP" \
           --server "http://localhost" \
           --serverInstance "BC" \
           --port 7049 \

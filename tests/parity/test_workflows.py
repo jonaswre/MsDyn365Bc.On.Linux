@@ -158,6 +158,9 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn("Microsoft.Dynamics.BusinessCentral.Development.Tools", scripts)
         self.assertIn("al workspace compile", scripts)
         self.assertIn("al publishapp", scripts)
+        self.assertIn("ALTOOL_DLL", scripts)
+        self.assertIn('dotnet "$ALTOOL_DLL" workspace compile', scripts)
+        self.assertIn('dotnet "$ALTOOL_DLL" publishapp', scripts)
         self.assertNotIn('BC_VERSION: "27.', str(workflow["jobs"]))
 
     def test_primary_workflows_cancel_stale_runs(self):
