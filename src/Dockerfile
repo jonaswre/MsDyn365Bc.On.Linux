@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ACCEPT_EULA=Y apt-get update && ACCEPT_EULA=Y apt-get install -y --no-install-recommends mssql-tools18 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /bc/hook /bc/patched /bc/refasm /bc/addins-overlay /bc/testrunner /bc/service /bc/artifacts /bc/scripts /bc/tools
+RUN mkdir -p /bc/hook /bc/patched /bc/refasm /bc/addins-overlay /bc/service /bc/artifacts /bc/scripts /bc/tools
 
 # Copy built artifacts from builder
 COPY --from=builder /build/output/hook/ /bc/hook/
@@ -44,11 +44,7 @@ COPY --from=builder /build/output/DrawingStub.dll /bc/addins-overlay/System.Draw
 
 # Copy scripts
 COPY scripts/ /bc/scripts/
-RUN chmod +x /bc/scripts/*.sh
-
-# Copy test runner extension (REST API for test execution)
-COPY extensions/TestRunnerExtension/MicrosoftTestRunnerPatched.app /bc/testrunner/MicrosoftTestRunnerPatched.app
-COPY extensions/TestRunnerExtension/TestRunnerExtension.app /bc/testrunner/TestRunner.app
+RUN chmod +x /bc/scripts/*.sh /bc/scripts/*.py
 
 # Copy SideService stubs (Linux replacements for Windows PE executables)
 COPY stubs/reporting-service-stub /bc/stubs/reporting-service-stub

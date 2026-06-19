@@ -1,10 +1,10 @@
 # GitHub Actions Starter Workflows For Business Central Containers
 
-Run AL tests against a Business Central container from your own GitHub
+Boot and publish AL apps against a Business Central container from your own GitHub
 repo. All flavours pull the public
 `ghcr.io/jonaswre/msdyn365bc.on.linux/bc-runner` image (no auth needed)
-and use the bundled scripts to boot BC, publish your apps, and execute
-tests via the bundled TestRunnerExtension.
+and use the bundled scripts to boot BC and publish your apps. Test execution is
+owned by your project's runner against the standard BC container endpoints.
 
 ## ✨ Recommended: reusable workflow (10-line consumer file)
 
@@ -12,8 +12,8 @@ This repo ships two **reusable workflows** in its own `.github/workflows/`
 that you can call from your repo. The consumer file is tiny:
 
 ```yaml
-# .github/workflows/bc-test.yml
-name: BC Tests
+# .github/workflows/bc-container.yml
+name: BC Container Publish
 on: [push, pull_request, workflow_dispatch]
 jobs:
   bc-tests:
@@ -22,15 +22,14 @@ jobs:
       bc_version:     "latest"
       app_dirs:       "app"
       test_app_dirs:  "test"
-      codeunit_range: "50000..99999"
 ```
 
 Two flavours are available — pick whichever fits:
 
 | Reusable workflow | When to use |
 |---|---|
-| `bc-test-from-source.yml` | Compile AL source from your repo, stage symbols from BC artifacts, publish, run tests. |
-| `bc-test-prebuilt.yml`    | Skip compilation; publish and run pre-built `.app` files. |
+| `bc-test-from-source.yml` | Compile AL source from your repo, stage symbols from BC artifacts, and publish apps. |
+| `bc-test-prebuilt.yml`    | Skip compilation; publish pre-built `.app` files. |
 
 A copy-paste consumer example is in
 [`bc-test-using-reusable.yml`](./bc-test-using-reusable.yml).
@@ -50,7 +49,7 @@ reproducible CI runs swap it for a release tag once one exists
 | `bc_password` | no | `admin` | NavUserPassword password for OData/API/Dev/WebClient access |
 | `app_dirs` | no | `""` | Space-separated dirs containing `app.json` for production apps |
 | `test_app_dirs` | **yes** | — | Space-separated dirs containing `app.json` for test apps |
-| `codeunit_range` | **yes** | — | IDs of your **test** codeunits to execute. Production app codeunits are published but not run. Accepts `"50000..99999"` (single AL range), `"50000..50100\|130450..130459"` (multiple ranges, pipe-separated), `"50000,50001,50002"` (explicit ids), or any mix. |
+| `codeunit_range` | no | `""` | Deprecated compatibility input. This workflow no longer ships a test runner. |
 | `al_tool_version` | no | *(auto-derived from bc_version)* | AL compiler CLI tool NuGet version. Auto-derived: BC 27 -> `16.2.28.57946`, BC 28 -> `17.0.34.45391`. Set explicitly to pin. |
 | `preprocessor_symbols` | no | `""` | Comma-separated preprocessor symbols for `/preprocessorsymbols` (e.g. `"BC27PLUS,BC28PLUS"`). |
 | `runtime_version` | no | *(auto-derived from bc_version)* | Override `app.json` `runtime` before compile. Auto-derived when blank: BC 27 → `16.0`, BC 28 → `17.0`. |
@@ -96,36 +95,19 @@ jobs:
 ```
 
 
-## Alternative: inlined templates (paste into your repo)
-
-If you'd rather see exactly what's happening — or you want to fork-and-tweak
-the steps — copy one of these files into `.github/workflows/bc-test.yml`
-in your repo and edit the `env:` block at the top.
-
-| File | When to use |
-|------|-------------|
-| [`bc-test-from-source.yml`](./bc-test-from-source.yml) | Your AL source lives in the repo and you want CI to compile it. |
-| [`bc-test-prebuilt.yml`](./bc-test-prebuilt.yml) | You already have `.app` files; skips compilation. |
-
-These are functionally equivalent to the reusable workflows above — just
-copied into your repo so you can edit them freely. Trade-off: when this
-container workflow improves, you'll have to re-copy it.
-
 All flavours:
 
 - Boot BC and SQL Server with Docker containers on a standard hosted runner
 - Download BC artifacts on demand (~50s on a hosted runner thanks to the
   HTTP/1.1 fix in `download-artifacts.sh`)
 - Publish via the BC dev endpoint
-- Execute tests via `scripts/run-tests.sh` over the same published BC network
-  surface used by other Business Central container automation
 - Print the BC log tail on failure
 
 ## Setup
 
-1. **Copy** one of the YAML files into your repo at
-   `.github/workflows/bc-test.yml` (or any name you like).
-2. **Edit the `env:` block** at the top:
+1. **Copy** `bc-test-using-reusable.yml` into your repo at
+   `.github/workflows/bc-container.yml` (or any name you like).
+2. **Edit the `with:` block**:
    - `BC_VERSION`, `BC_COUNTRY`, `BC_TYPE` — which Microsoft BC build to test
      against. The inline templates stay pinned for reproducible copy-paste
      builds; the reusable workflows default to `latest`.
@@ -133,9 +115,6 @@ All flavours:
      to directories containing `app.json`.
    - **Pre-built**: `APP_FILES` and `TEST_APP_FILES` — space-separated paths
      to `.app` files in your repo.
-   - `CODEUNIT_RANGE` — IDs of your test codeunits. Accepts `70000..70099`
-     (single range), `70000..70099|130450..130459` (multiple ranges,
-     pipe-separated), `70000,70001,70002` (explicit ids), or any mix.
 3. **Commit & push**. The workflow runs on every push and PR to `main`/`master`,
    plus manually via the Actions tab.
 
@@ -147,12 +126,8 @@ All flavours:
   CRONUS demo DB, and exposes the standard BC service endpoints used by
   container automation: Management 7045, Client Services 7046, SOAP 7047,
   OData 7048, Dev 7049, API 7052, WebClient 7085, and Management API 7086.
-- **Repository checkout**: brings in `docker-compose.yml`, `run-tests.sh`,
-  the `TestRunnerExtension.app` (bundled in the image, but the script also
-  exists on the host for orchestration), and `download-artifacts.sh`.
-- **TestRunnerExtension**: an AL extension shipped with the image. Exposes
-  the network API pages `run-tests.sh` uses to populate test suites, execute
-  codeunits, and read results.
+- **Repository checkout**: brings in `docker-compose.yml`,
+  `download-artifacts.sh`, publish helpers, and the startup scripts.
 
 ## Custom analyzers and rulesets
 
@@ -183,7 +158,6 @@ jobs:
       bc_version:     "latest"
       app_dirs:       "app"
       test_app_dirs:  "test"
-      codeunit_range: "50000..99999"
       enable_code_cop: true
       enable_ui_cop: true
       enable_app_source_cop: true
@@ -209,8 +183,8 @@ that hides the real cause, `ALCops.Common.dll` co-load) live in
 - **Multiple test apps with shared symbols**: build production apps first,
   copy their `.app` outputs into each test app's `.alpackages/` directory
   (the from-source template already does this).
-- **Custom BC user / company**: pass `--auth user:pass` and `--company "..."`
-  to `run-tests.sh`.
+- **Test execution**: run your own test runner against the published standard
+  BC endpoints after this workflow has built and published the apps.
 
 ## Troubleshooting
 
@@ -218,7 +192,6 @@ that hides the real cause, `ALCops.Common.dll` co-load) live in
 |---|---|
 | `BC unhealthy` after several minutes | Artifact download timed out, or first-boot DB restore is still running. Look at the failure log tail in the workflow output. |
 | `publish failed: 422` | App schema conflict — make sure your version number bumps between runs, or set `SchemaUpdateMode=ForceSync` (already the default in these templates). |
-| `Could not get company ID` | BC isn't reachable through the configured API/OData endpoint. Check that the container is `healthy` and that the API/OData ports are mapped. |
 | AL compile errors about missing symbols | The "Stage symbols" step could not resolve a declared dependency. Check the consumer `app.json` dependency IDs, the selected artifact version, and the `stage-symbols.py` warning output. |
 | Test fails with `serviceConnection` errors | Use the latest `bc-runner` image — `serviceConnection`/TestPage support depends on the current startup-hook patch set. |
 

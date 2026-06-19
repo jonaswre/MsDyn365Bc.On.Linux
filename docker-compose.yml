@@ -27,7 +27,7 @@ services:
     build:
       context: .
       dockerfile: src/Dockerfile
-    mem_limit: ${BC_MEMORY_LIMIT:-8G}
+    mem_limit: ${BC_MEMORY_LIMIT:-12G}
     dns: ${BC_DNS:-}
     stdin_open: true
     depends_on:
@@ -50,7 +50,7 @@ services:
       BC_USERNAME: ${BC_USERNAME:-admin}
       BC_PASSWORD: ${BC_PASSWORD:-admin}
       BC_INCLUDE_TEST_TOOLKIT: ${BC_INCLUDE_TEST_TOOLKIT:-true}
-      BC_MEMORY_LIMIT: ${BC_MEMORY_LIMIT:-8G}
+      BC_MEMORY_LIMIT: ${BC_MEMORY_LIMIT:-12G}
       BC_DNS: ${BC_DNS:-}
       BC_API_REQUEST_LIMIT: ${BC_API_REQUEST_LIMIT:-50}
       SA_PASSWORD: ${SA_PASSWORD:-Passw0rd123!}
