@@ -14,6 +14,15 @@ The `--wait` flag returns once BC is healthy. **First boot takes ~5 minutes**
 (artifact download + database restore + extension compilation). Subsequent
 starts take ~1 minute.
 
+You don't need to build anything: `docker compose up` **pulls the prebuilt,
+publicly accessible image** (`ghcr.io/stefanmaron/msdyn365bc.on.linux/bc-runner:latest`)
+when it isn't already in your local cache — no GHCR auth required. To grab a
+newer published build later, run `docker compose pull`. Only contributors
+hacking on the image itself need `docker compose build` (an explicit build
+tags the same ref locally, so it then takes precedence over the pull — run
+`docker compose build` again after changing `src/` or `scripts/`, or
+`docker compose pull` to drop back to the published image).
+
 When the command returns, BC is running with a CRONUS demo database, dev
 endpoint, SOAP, OData, API, and the test toolkit (Test Runner, Library Assert,
 Variable Storage, Permissions Mock, Any, System Application Test Library,
@@ -112,12 +121,30 @@ After `docker compose up`, these are available:
 | OData        | `http://localhost:7048/BC/ODataV4`        | Data access                          |
 | API v2.0     | `http://localhost:7052/BC/api/v2.0`       | Business API                         |
 | Mgmt API     | `http://localhost:7086/BC`                | Management API service               |
-| Client       | `http://localhost:7085/BC/client`         | WebClient / client services          |
+| Client (WS)  | `ws://localhost:7085/BC`                  | WebSocket client services (TestPage) |
+| Web client   | `http://localhost:8080`                   | Browser UI (opt-in, `BC_WEBCLIENT=1`) |
 
 **Authentication:** `admin` / `admin` (NavUserPassword) by default.
 All BC HTTP endpoints require these Basic credentials, matching the
 standard NavUserPassword container surface. Set `BC_USERNAME` and
 `BC_PASSWORD` to use custom container credentials.
+
+### Web client (browser UI)
+
+Microsoft's real web client (`Prod.Client.WebCoreApp`) can be self-hosted
+on Kestrel inside the bc container — sign-in, role center, list pages, and
+cards work in a normal browser against the Linux NST:
+
+```bash
+BC_WEBCLIENT=1 docker compose up -d --wait
+# then open http://localhost:8080  (admin / admin by default)
+```
+
+Works with the macOS overlay too
+(`BC_WEBCLIENT=1 docker compose -f docker-compose.yml -f docker-compose.macos.yml up -d --wait`).
+Change the host port with `BC_WEBCLIENT_PORT`. EXPERIMENTAL — intended for
+developers who want to poke at data and pages in a real UI; reports,
+printing, and file upload are untested. Details: [docs/WEBCLIENT-POC.md](docs/WEBCLIENT-POC.md).
 
 ---
 
@@ -173,6 +200,13 @@ standard NavUserPassword container surface. Set `BC_USERNAME` and
 4. **Publish + run** — press `F5` (or `Ctrl+F5`) in VS Code. The AL
    extension uses the `launch.json` settings to publish via the dev
    endpoint and open the configured startup page.
+
+5. **Debugging works** — breakpoints, call stack, variables, watch,
+   stepping, both `launch` and `attach` (`"request": "attach"` with
+   `"breakOnNext": "WebClient"` pairs nicely with `BC_WEBCLIENT=1` to
+   debug code triggered from the browser). Requires StartupHook Patch
+   #25 (included). Details and verified configs:
+   [docs/DEBUGGING.md](docs/DEBUGGING.md).
 
 ---
 

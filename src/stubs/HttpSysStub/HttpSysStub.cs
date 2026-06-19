@@ -153,24 +153,30 @@ namespace Microsoft.AspNetCore.Hosting
                 // Set authenticated service-user identity after validating Basic auth.
                 // Defaults to admin/admin for the standard container network surface,
                 // but honors BC_USERNAME/BC_PASSWORD for custom provider-created users.
-                app.Use(async (context, nextMiddleware) =>
+                // HTTPSYS_STUB_INJECT_IDENTITY=0 disables this for processes that
+                // run their own authentication (e.g. the self-hosted web client,
+                // whose forms sign-in must not see a pre-authenticated principal).
+                if (Environment.GetEnvironmentVariable("HTTPSYS_STUB_INJECT_IDENTITY") != "0")
                 {
-                    if (!IsAuthorizedRequest(context))
+                    app.Use(async (context, nextMiddleware) =>
                     {
-                        await RejectUnauthorized(context);
-                        return;
-                    }
+                        if (!IsAuthorizedRequest(context))
+                        {
+                            await RejectUnauthorized(context);
+                            return;
+                        }
 
-                    var serviceUser = ServiceUserName();
-                    var identity = new ClaimsIdentity(new[] {
-                        new Claim(ClaimTypes.Name, serviceUser),
-                        new Claim(ClaimTypes.Role, "SUPER"),
-                        new Claim(ClaimTypes.Role, "AdminService"),
-                        new Claim(ClaimTypes.NameIdentifier, "00000000-0000-0000-0000-000000000001"),
-                    }, "Passthrough");
-                    context.User = new ClaimsPrincipal(identity);
-                    await nextMiddleware();
-                });
+                        var serviceUser = ServiceUserName();
+                        var identity = new ClaimsIdentity(new[] {
+                            new Claim(ClaimTypes.Name, serviceUser),
+                            new Claim(ClaimTypes.Role, "SUPER"),
+                            new Claim(ClaimTypes.Role, "AdminService"),
+                            new Claim(ClaimTypes.NameIdentifier, "00000000-0000-0000-0000-000000000001"),
+                        }, "Passthrough");
+                        context.User = new ClaimsPrincipal(identity);
+                        await nextMiddleware();
+                    });
+                }
 
                 next(app);
             };

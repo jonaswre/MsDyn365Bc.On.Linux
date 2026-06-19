@@ -23,7 +23,15 @@ services:
       start_period: 20s
 
   bc:
-    image: ${BC_RUNNER_IMAGE:-bc-runner:local}
+    image: ${BC_RUNNER_IMAGE:-ghcr.io/stefanmaron/msdyn365bc.on.linux/bc-runner:latest}
+    # Pull the published image if it's not already in the local cache. Because a
+    # `build:` section is present, Compose would otherwise BUILD on first `up`
+    # (the Build Spec default) — which forces every community user through a
+    # 5-10 min local build. `missing` flips that to pull-by-default; only an
+    # explicit `docker compose build` rebuilds. Developers iterating on the image
+    # build locally (which tags this same ref), so their build shadows the pull.
+    # To track newer published builds: `docker compose pull bc`.
+    pull_policy: missing
     platform: linux/amd64
     build:
       context: .
@@ -43,6 +51,8 @@ services:
       - "${BC_MGMT_PORT:-7045}:7045"
       - "${BC_MGMT_API_PORT:-7086}:7086"
       - "${BC_CLIENT_PORT:-7085}:7085"
+      # Web client (PoC, opt-in via BC_WEBCLIENT=1 — see docs/WEBCLIENT-POC.md)
+      - "${BC_WEBCLIENT_PORT:-8080}:8080"
     environment:
       BC_VERSION: ${BC_VERSION:-latest}
       BC_COUNTRY: ${BC_COUNTRY:-w1}
@@ -77,6 +87,9 @@ services:
       BC_REPORTING_DUMP_DIR: ${BC_REPORTING_DUMP_DIR:-}
       BC_ARTIFACT_URL: ${BC_ARTIFACT_URL:-}
       BC_TEST_APPS: ${BC_TEST_APPS:-}
+      # Opt-in: self-host Microsoft's real BC web client on Kestrel (port 8080).
+      # EXPERIMENTAL PoC — see docs/WEBCLIENT-POC.md.
+      BC_WEBCLIENT: ${BC_WEBCLIENT:-0}
       SQL_SERVER: sql
       # .NET runtime tuning. Defaults are inherited from the entrypoint
       # (gcServer=1, TieredCompilation=0). These pass-throughs let us A/B
