@@ -159,6 +159,8 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn("al workspace compile", scripts)
         self.assertIn("al publishapp", scripts)
         self.assertIn("ALTOOL_DLL", scripts)
+        self.assertIn("OFFICIAL_AL_BIN", scripts)
+        self.assertIn("alc.dll", scripts)
         self.assertIn('dotnet "$ALTOOL_DLL" workspace compile', scripts)
         self.assertIn('dotnet "$ALTOOL_DLL" publishapp', scripts)
         self.assertNotIn('BC_VERSION: "27.', str(workflow["jobs"]))

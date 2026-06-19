@@ -379,6 +379,17 @@ jobs:
         fi
         echo "ALTOOL_DLL=$ALTOOL_DLL" >> "$GITHUB_ENV"
         dotnet "$ALTOOL_DLL" --version
+        AL_TOOL_DIR=$(dirname "$ALTOOL_DLL")
+        OFFICIAL_AL_BIN="$RUNNER_TEMP/official-altool-bin"
+        mkdir -p "$OFFICIAL_AL_BIN"
+        cat > "$OFFICIAL_AL_BIN/alc" <<SH
+        #!/usr/bin/env bash
+        exec dotnet "$AL_TOOL_DIR/alc.dll" "\$@"
+        SH
+        chmod +x "$OFFICIAL_AL_BIN/alc"
+        echo "$OFFICIAL_AL_BIN" >> "$GITHUB_PATH"
+        echo "OFFICIAL_AL_BIN=$OFFICIAL_AL_BIN" >> "$GITHUB_ENV"
+        PATH="$OFFICIAL_AL_BIN:$PATH" alc /? | head -5
 
     - name: Download artifacts, stage symbols, and start BC
       env:
