@@ -683,7 +683,13 @@ jobs:
             exit 0
           fi
 
-          if ! python3 scripts/run-tests-altool.py --probe --auth "$AUTH"; then
+          ALTOOL_TEST_SCRIPT="bc-runtime/scripts/run-tests-altool.py"
+          SUMMARY_SCRIPT="bc-runtime/scripts/workflow-summary.sh"
+          if [ ! -f "$ALTOOL_TEST_SCRIPT" ]; then
+            echo "ERROR: missing standard test runner helper: $ALTOOL_TEST_SCRIPT"
+            exit 1
+          fi
+          if ! python3 "$ALTOOL_TEST_SCRIPT" --probe --auth "$AUTH"; then
             if [ "$REQUESTED_RUNNER" = "altool" ]; then
               echo "ERROR: test_runner=altool requires the standard Dev API 7.0 / TestRunnerHub surface."
               exit 1
@@ -693,7 +699,7 @@ jobs:
             exit 0
           fi
 
-          bash scripts/workflow-summary.sh begin TESTS "Run AL tests"
+          bash "$SUMMARY_SCRIPT" begin TESTS "Run AL tests"
           mkdir -p build
           TESTS_TOTAL=0
           TESTS_PASSED=0
@@ -709,7 +715,7 @@ jobs:
             junit_file="build/junit-$(basename "$d").xml"
             echo "=== Running tests in $base with Microsoft AL tooling ==="
             tmplog=$(mktemp)
-            python3 scripts/run-tests-altool.py \
+            python3 "$ALTOOL_TEST_SCRIPT" \
               --app "$app" \
               --auth "$AUTH" \
               --codeunit-range "${{ inputs.codeunit_range }}" \
@@ -746,11 +752,11 @@ jobs:
             rm -f "$tmplog"
           done
 
-          bash scripts/workflow-summary.sh count tests_total    "$TESTS_TOTAL"
-          bash scripts/workflow-summary.sh count tests_passed   "$TESTS_PASSED"
-          bash scripts/workflow-summary.sh count tests_failed   "$TESTS_FAILED"
-          bash scripts/workflow-summary.sh count codeunits_total "$CODEUNITS_TOTAL"
-          bash scripts/workflow-summary.sh end TESTS
+          bash "$SUMMARY_SCRIPT" count tests_total    "$TESTS_TOTAL"
+          bash "$SUMMARY_SCRIPT" count tests_passed   "$TESTS_PASSED"
+          bash "$SUMMARY_SCRIPT" count tests_failed   "$TESTS_FAILED"
+          bash "$SUMMARY_SCRIPT" count codeunits_total "$CODEUNITS_TOTAL"
+          bash "$SUMMARY_SCRIPT" end TESTS
 
           if [ "$ANY_TEST_FAILED" -ne 0 ]; then
             echo "ERROR: at least one standard AL test run exited non-zero"

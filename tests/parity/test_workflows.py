@@ -13,6 +13,10 @@ class ParityWorkflowTests(unittest.TestCase):
         path = Path(".github/workflows/build-image.yml")
         return yaml.safe_load(path.read_text(encoding="utf-8"))
 
+    def bc_test_from_source_workflow(self):
+        path = Path(".github/workflows/bc-test-from-source.yml")
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
+
     def linux_contract_job(self):
         return self.workflow()["jobs"]["linux-contract"]
 
@@ -173,6 +177,19 @@ class ParityWorkflowTests(unittest.TestCase):
 
     def test_custom_run_tests_script_is_not_shipped(self):
         self.assertFalse(Path("scripts/run-tests.sh").exists())
+
+    def test_reusable_workflow_uses_runtime_checkout_for_standard_test_helpers(self):
+        steps = self.bc_test_from_source_workflow()["jobs"]["test"]["steps"]
+        test_step = next(step for step in steps if step.get("name") == "Run AL tests with standard tooling")
+        script = test_step["run"]
+
+        self.assertIn('ALTOOL_TEST_SCRIPT="bc-runtime/scripts/run-tests-altool.py"', script)
+        self.assertIn('SUMMARY_SCRIPT="bc-runtime/scripts/workflow-summary.sh"', script)
+        self.assertIn('python3 "$ALTOOL_TEST_SCRIPT" --probe', script)
+        self.assertIn('python3 "$ALTOOL_TEST_SCRIPT" \\', script)
+        self.assertIn('bash "$SUMMARY_SCRIPT" begin TESTS', script)
+        self.assertNotIn("python3 scripts/run-tests-altool.py", script)
+        self.assertNotIn("bash scripts/workflow-summary.sh", script)
 
 
     def test_linux_diagnostics_are_captured_after_contract_collection(self):
