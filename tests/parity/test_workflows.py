@@ -21,6 +21,10 @@ class ParityWorkflowTests(unittest.TestCase):
         path = Path(".github/workflows/bc-test-from-source.yml")
         return yaml.safe_load(path.read_text(encoding="utf-8"))
 
+    def bc_test_prebuilt_workflow(self):
+        path = Path(".github/workflows/bc-test-prebuilt.yml")
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
+
     def linux_contract_job(self):
         return self.workflow()["jobs"]["linux-contract"]
 
@@ -286,6 +290,21 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn('bash "$SUMMARY_SCRIPT" begin TESTS', script)
         self.assertNotIn("python3 scripts/run-tests-altool.py", script)
         self.assertNotIn("bash scripts/workflow-summary.sh", script)
+
+    def test_reusable_workflows_login_to_ghcr_before_pull(self):
+        for workflow in (
+            self.bc_test_from_source_workflow(),
+            self.bc_test_prebuilt_workflow(),
+        ):
+            self.assertEqual("read", workflow["permissions"]["packages"])
+            steps = workflow["jobs"]["test"]["steps"]
+            names = [step.get("name") for step in steps]
+            login = next(step for step in steps if step.get("name") == "Log in to GHCR")
+
+            self.assertLess(names.index("Log in to GHCR"), names.index("Download BC artifacts + pull docker images (parallel)"))
+            self.assertEqual("docker/login-action@v3", login["uses"])
+            self.assertEqual("ghcr.io", login["with"]["registry"])
+            self.assertEqual("${{ github.token }}", login["with"]["password"])
 
 
     def test_linux_diagnostics_are_captured_after_contract_collection(self):
