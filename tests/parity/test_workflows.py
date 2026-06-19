@@ -132,9 +132,10 @@ class ParityWorkflowTests(unittest.TestCase):
         webclient = workflow["jobs"]["test-webclient"]
         container_download = workflow["jobs"]["test-container-download"]
         macos = workflow["jobs"]["test-macos-overlay"]
+        official = workflow["jobs"]["test-official-altool"]
         scripts = "\n".join(
             step.get("run", "")
-            for job in (webclient, container_download, macos)
+            for job in (webclient, container_download, macos, official)
             for step in job["steps"]
         )
         container_download_start = None
@@ -149,10 +150,14 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertEqual("Web client opt-in (BC 28.2)", webclient["name"])
         self.assertEqual("Container download without test toolkit (BC 28.2)", container_download["name"])
         self.assertEqual("macOS overlay test (BC 28.2)", macos["name"])
+        self.assertEqual("Official AL tool bench (BC 28.2)", official["name"])
         self.assertEqual("false", container_download_start["env"]["BC_INCLUDE_TEST_TOOLKIT"])
         self.assertEqual("1", webclient_start["env"]["BC_WEBCLIENT"])
         self.assertIn("BC_INCLUDE_TEST_TOOLKIT=false: skipped test toolkit publishing", scripts)
         self.assertIn("BC_WEBCLIENT=1: starting web client", scripts)
+        self.assertIn("Microsoft.Dynamics.BusinessCentral.Development.Tools", scripts)
+        self.assertIn("al workspace compile", scripts)
+        self.assertIn("al publishapp", scripts)
         self.assertNotIn('BC_VERSION: "27.', str(workflow["jobs"]))
 
     def test_primary_workflows_cancel_stale_runs(self):
@@ -187,7 +192,7 @@ class ParityWorkflowTests(unittest.TestCase):
         promote = workflow["jobs"]["publish-latest"]
 
         self.assertEqual(
-            ["test", "test-container-download", "test-webclient", "test-macos-overlay"],
+            ["test", "test-container-download", "test-webclient", "test-macos-overlay", "test-official-altool"],
             promote["needs"],
         )
         self.assertIn("github.event_name != 'pull_request'", promote["if"])

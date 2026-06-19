@@ -330,8 +330,149 @@ jobs:
       if: failure()
       run: docker compose logs sql 2>&1 | tail -50
 
+  # Uses Microsoft's official AL development tool as an external bench against
+  # the Linux container. This validates that the standard CI-facing tool can
+  # compile a workspace and publish the resulting app to the container's dev
+  # endpoint without any custom runner or in-container helper.
+  test-official-altool:
+    needs: [build-image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    name: Official AL tool bench (BC 28.2)
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set lowercase image name
+      run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/bc-runner" >> $GITHUB_ENV
+
+    - name: Log in to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Setup .NET 8
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: "8.0.x"
+
+    - name: Install official AL development tool
+      run: |
+        dotnet tool install -g Microsoft.Dynamics.BusinessCentral.Development.Tools \
+          --version "17.0.34.45391" \
+        || dotnet tool update -g Microsoft.Dynamics.BusinessCentral.Development.Tools \
+          --version "17.0.34.45391"
+        echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+        export PATH="$HOME/.dotnet/tools:$PATH"
+        al --version
+        al --help
+        al workspace compile --help
+        al publishapp --help
+
+    - name: Download artifacts, stage symbols, and start BC
+      env:
+        BC_VERSION: "28.2"
+        BC_COUNTRY: "w1"
+        BC_TYPE: "onprem"
+        BC_RUNNER_IMAGE: ${{ needs.build-image.outputs.runner_image }}
+        BC_INCLUDE_TEST_TOOLKIT: "false"
+        BC_ARTIFACTS_DIR: ${{ github.workspace }}/artifact-cache/28.2
+      run: |
+        set -e
+        mkdir -p "$BC_ARTIFACTS_DIR" official-symbols
+        (
+          ./scripts/download-artifacts.sh "$BC_TYPE" "$BC_VERSION" "$BC_COUNTRY" "$BC_ARTIFACTS_DIR"
+        ) &
+        ARTIFACT_PID=$!
+        (
+          for attempt in 1 2 3 4 5; do
+            if docker compose pull --quiet; then break; fi
+            echo "docker compose pull failed (attempt $attempt/5); retrying in 15s..."
+            sleep 15
+          done
+        ) &
+        PULL_PID=$!
+        wait $ARTIFACT_PID || { echo "artifact download failed"; exit 1; }
+        wait $PULL_PID     || { echo "docker pull failed"; exit 1; }
+
+        PLATFORM_VERSION=$(python3 -c "import json; print(json.load(open('$BC_ARTIFACTS_DIR/app/manifest.json'))['platform'])")
+        PLATFORM_MAJOR_MINOR=$(echo "$PLATFORM_VERSION" | cut -d. -f1,2)
+        RUNTIME_VERSION=$(al GetLatestSupportedRuntimeVersion "$PLATFORM_MAJOR_MINOR" | tr -d '\r\n')
+        echo "Official AL tool selected runtime $RUNTIME_VERSION for platform $PLATFORM_MAJOR_MINOR"
+        python3 - extensions/minimal-test/app.json "$RUNTIME_VERSION" <<'PY'
+        import json
+        import pathlib
+        import sys
+
+        path = pathlib.Path(sys.argv[1])
+        runtime = sys.argv[2]
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["runtime"] = runtime
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        PY
+
+        python3 scripts/stage-symbols.py \
+          --app-json extensions/minimal-test/app.json \
+          --artifact-dir "$BC_ARTIFACTS_DIR" \
+          --out-dir official-symbols
+        cat > official-altool-smoke.code-workspace <<'JSON'
+        {
+          "folders": [
+            {
+              "name": "Minimal Test",
+              "path": "extensions/minimal-test"
+            }
+          ]
+        }
+        JSON
+
+        docker compose up -d 2>&1 | tail -10
+
+    - name: Compile and publish with official AL tool
+      env:
+        BC_SERVER_USERNAME: admin
+        BC_SERVER_PASSWORD: admin
+      run: |
+        set -e
+        mkdir -p official-build official-logs
+        al workspace compile official-altool-smoke.code-workspace \
+          --packagecachepath "$(pwd)/official-symbols" \
+          --outfolder "$(pwd)/official-build" \
+          --maxcpucount 1 \
+          --define OFFICIAL_AL_TOOL_BENCH \
+          --logdirectory "$(pwd)/official-logs"
+
+        APP=$(find official-build -type f -name '*.app' | sort | head -1)
+        if [ -z "$APP" ]; then
+          echo "ERROR: official AL tool did not produce an app package"
+          find official-build -maxdepth 3 -type f -print
+          exit 1
+        fi
+        echo "Official AL tool built: $APP"
+        al GetPackageManifest "$APP"
+
+        ./scripts/wait-for-bc-healthy.sh 30
+        ./scripts/verify-network-surface.sh
+        al publishapp "$APP" \
+          --server "http://localhost" \
+          --serverInstance "BC" \
+          --port 7049 \
+          --environmentType "OnPrem" \
+          --authentication "UserPassword" \
+          --schemaUpdateMode "ForceSync"
+
+    - name: Official AL tool bench diagnostics
+      if: failure()
+      run: |
+        echo "=== official AL tool logs ==="
+        find official-logs -type f -maxdepth 2 -print -exec sed -n '1,160p' {} \; || true
+        echo "=== BC logs ==="
+        docker compose logs bc 2>&1 | tail -200 || true
+
   publish-latest:
-    needs: [test, test-container-download, test-webclient, test-macos-overlay]
+    needs: [test, test-container-download, test-webclient, test-macos-overlay, test-official-altool]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
