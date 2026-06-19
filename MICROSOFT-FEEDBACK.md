@@ -128,7 +128,7 @@ resolvers. So whatever is causing the drift, it's not us.
 
 We also confirmed empirically that the .app ships valid R2R DLLs:
 
-- `Microsoft_Base Application_27.5.46862.48612.app` contains 5 R2R
+- `Microsoft_Base Application_28.2.x.app` contains 5 R2R
   DLLs under `publishedartifacts/file:///S:/.../Ready2RunApps/W1/...`
 - The DLL filenames match exactly the hashes that show up in the
   "Compiling the application object assembly" log lines

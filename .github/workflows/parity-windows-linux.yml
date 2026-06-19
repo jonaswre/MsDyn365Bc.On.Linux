@@ -6,7 +6,7 @@ on:
       versions:
         description: 'BC versions to compare'
         required: false
-        default: '27.5,28.1'
+        default: '28.1,28.2'
         type: string
 
 permissions:
@@ -31,11 +31,15 @@ jobs:
 
           versions = [item.strip() for item in os.environ["VERSIONS"].split(",") if item.strip()]
           invalid = [version for version in versions if not re.fullmatch(r"[0-9]+\.[0-9]+", version)]
+          unsupported = [version for version in versions if not version.startswith("28.")]
           if not versions:
-              print("No BC versions provided. Use comma-separated major.minor values like 27.5,28.1.", file=sys.stderr)
+              print("No BC versions provided. Use comma-separated BC 28 major.minor values like 28.1,28.2.", file=sys.stderr)
               sys.exit(1)
           if invalid:
-              print(f"Invalid BC version(s): {', '.join(invalid)}. Expected comma-separated major.minor values like 27.5,28.1.", file=sys.stderr)
+              print(f"Invalid BC version(s): {', '.join(invalid)}. Expected comma-separated major.minor values like 28.1,28.2.", file=sys.stderr)
+              sys.exit(1)
+          if unsupported:
+              print(f"Unsupported BC version(s): {', '.join(unsupported)}. This parity workflow supports BC 28 only.", file=sys.stderr)
               sys.exit(1)
           print("matrix=" + json.dumps({"bc_version": versions}))
           PY
@@ -58,7 +62,6 @@ jobs:
         run: |
           BC_MAJOR=$(echo "$BC_VERSION" | cut -d. -f1)
           case "$BC_MAJOR" in
-            27) AL_TOOL="16.2.28.57946"; RUNTIME="16.0" ;;
             28) AL_TOOL="17.0.34.45391"; RUNTIME="17.0" ;;
             *) echo "Unsupported BC major $BC_MAJOR"; exit 1 ;;
           esac

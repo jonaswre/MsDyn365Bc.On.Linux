@@ -41,10 +41,10 @@ results without the container becoming unhealthy.
 
 ## Prompt 2: Revalidate Newer Insider Artifacts
 
-**Problem:** The public container matrix now tracks the supported BC 27.x and
-28.x artifact range, while Microsoft's internal comparison may use newer
-insider builds. Side-by-side comparison is suggestive but not definitive when
-the artifact versions differ.
+**Problem:** The public container matrix now tracks the supported BC 28.x
+artifact range, while Microsoft's internal comparison may use newer insider
+builds. Side-by-side comparison is suggestive but not definitive when the
+artifact versions differ.
 
 **What we have:**
 - Working bc-linux setup on the current supported public artifact range with
@@ -53,7 +53,7 @@ the artifact versions differ.
   `Nav.Ncl.dll`, `TestPageClient.dll`, `Nav.Types.dll`
 - Download script at `scripts/download-artifacts.sh`
 - Microsoft's Bucket 1: 151 min on their self-hosted runners (29.0)
-- Our Bucket 1 partial: 19 min local for 6 apps on the older 27.5 baseline
+- Our Bucket 1 partial: 19 min local for 6 apps on an older baseline
 
 **Goal:** Get a working bc-linux container on BC 29.0 (insider build) and
 run the same Bucket 1 / Bucket 4 test apps so the comparison is

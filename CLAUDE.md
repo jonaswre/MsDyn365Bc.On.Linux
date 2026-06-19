@@ -80,7 +80,7 @@ docker compose build bc && docker compose up -d --wait
 
 ### Key invariants worth remembering
 
-- **.NET runtime tuning.** The entrypoint sets `DOTNET_gcServer=1` (Server GC, better throughput for the parallel Roslyn compile during NST startup — contrary to older PERFORMANCE-IDEAS.md warnings, this works fine in current BC 27.x) and `DOTNET_TieredCompilation=0` (tier-0 disabled so JMP hooks don't get overwritten by Tier 1 recompilation — the Watson crash handler and several other patches rely on hooks staying in place). Additional tuning knobs (`DOTNET_ReadyToRun`, `DOTNET_GCRetainVM`, `DOTNET_GCConserveMemory`, `DOTNET_GCHeapCount`, `DOTNET_GCNoAffinitize`) are exposed via docker-compose passthroughs for A/B experiments without rebuilding the image — see the `.NET runtime tuning` block in `docker-compose.yml`. Tested 2026-04-08: `DOTNET_ReadyToRun=1` and `DOTNET_GCRetainVM=1` both individually made cold boot ~5s slower on local, not faster. Not adopted.
+- **.NET runtime tuning.** The entrypoint sets `DOTNET_gcServer=1` (Server GC, better throughput for the parallel Roslyn compile during NST startup — contrary to older PERFORMANCE-IDEAS.md warnings, this works fine in current BC 28.x) and `DOTNET_TieredCompilation=0` (tier-0 disabled so JMP hooks don't get overwritten by Tier 1 recompilation — the Watson crash handler and several other patches rely on hooks staying in place). Additional tuning knobs (`DOTNET_ReadyToRun`, `DOTNET_GCRetainVM`, `DOTNET_GCConserveMemory`, `DOTNET_GCHeapCount`, `DOTNET_GCNoAffinitize`) are exposed via docker-compose passthroughs for A/B experiments without rebuilding the image — see the `.NET runtime tuning` block in `docker-compose.yml`. Tested 2026-04-08: `DOTNET_ReadyToRun=1` and `DOTNET_GCRetainVM=1` both individually made cold boot ~5s slower on local, not faster. Not adopted.
 - **`/bc/service` is a volume**: edits to BC DLLs persist across container restarts, and the entrypoint guards `Step 2` / `Step 2b` with `[ -f ... ]` checks. To force re-patching, `docker compose down -v` (or delete the `bc-service` volume).
 - **`Add-ins` vs `Add-Ins`**: Linux is case-sensitive. The entrypoint renames the directory; never refer to the lowercase form in new patches.
 - **Patches that depend on assembly load order** (e.g. #18 `SetupSideServices` must run before `Main()` calls it) live in `StartupHook.Initialize()`, not in the per-assembly load callback. Adding a new patch in the wrong place will silently fail because the type isn't loaded yet — or, worse, succeed once and then break on the next BC update because load order shifted.
@@ -369,6 +369,6 @@ that touches `src/`, `scripts/`, or `extensions/`. Both
 `build-image.yml` and `test-versions.yml`'s inline build job share
 registry layer cache via the same `:cache` tag.
 
-Trigger `test-versions` manually with a `versions: "27.0,28.1"`
-input to test specific versions. The default matrix runs every
-supported BC version on push/PR (currently 27.0–27.5 and 28.0–28.1).
+Trigger `test-versions` manually with a `versions: "28.0,28.2"`
+input to test specific versions. The default matrix runs the supported
+BC 28 versions on push/PR.

@@ -40,7 +40,7 @@ class EntrypointTestRunnerPublishTests(unittest.TestCase):
         self.assertIn('DB_FILE="${DB_FILE//\\\\//}"', text)
         self.assertIn('LICENSE_FILE="${LICENSE_FILE//\\\\//}"', text)
 
-    def test_compose_defaults_to_bc27_safe_memory_limit(self) -> None:
+    def test_compose_defaults_to_hosted_runner_memory_limit(self) -> None:
         text = COMPOSE_FILE.read_text(encoding="utf-8")
 
         self.assertIn("mem_limit: ${BC_MEMORY_LIMIT:-12G}", text)

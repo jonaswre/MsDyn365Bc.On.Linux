@@ -397,7 +397,7 @@ fi
 # The BC service tier loads Microsoft.BusinessCentral.Reporting.Client.dll from
 # $SERVICE_DIR, so Grpc.Core probes for its native Linux extension there. Some
 # artifacts do not ship the Linux native extension; the image carries the
-# Grpc.Core 2.46.6 native library that matches BC 27.x.
+# Grpc.Core 2.46.6 native library used by current supported artifacts.
 GRPC_NATIVE_SOURCE=""
 if [ -f "$SERVICE_DIR/SideServices/libgrpc_csharp_ext.x64.so" ]; then
     GRPC_NATIVE_SOURCE="$SERVICE_DIR/SideServices/libgrpc_csharp_ext.x64.so"
@@ -1435,8 +1435,7 @@ PYEOF
         fi
 
         # Publish the Microsoft Test Runner from the selected BC artifact tree.
-        # Runtime compatibility is owned by the artifact version: BC 27 ships a
-        # runtime 16 Test Runner, BC 28 ships runtime 17, and so on.
+        # Runtime compatibility is owned by the artifact version.
         if [ "$BC_INCLUDE_TEST_TOOLKIT_ENABLED" = "true" ]; then
             TEST_RUNNER_APP=$(python3 /bc/scripts/resolve-test-runner-app.py "$ARTIFACTS")
             if [ -z "$TEST_RUNNER_APP" ] || [ ! -f "$TEST_RUNNER_APP" ]; then

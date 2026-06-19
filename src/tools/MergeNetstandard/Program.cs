@@ -11,7 +11,7 @@ class Program
     static readonly string RefAsmDir = Path.Combine(BaseDir, "StartupHook/refasm");
     static readonly string PatchedDir = Path.Combine(BaseDir, "StartupHook/patched");
     static readonly string PlatformDir = Environment.GetEnvironmentVariable("PLATFORM_DIR")
-        ?? Path.Combine(BaseDir, "artifacts/onprem/27.5.46862.0/platform");
+        ?? Path.Combine(BaseDir, "artifacts/onprem/28.2/platform");
     static readonly string ServiceTierDir = FindServiceTierDir(PlatformDir);
     static readonly string WebClientRefsDir = FindWebClientRefsDir(PlatformDir);
 

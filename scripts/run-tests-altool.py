@@ -10,7 +10,8 @@ mechanism the VS Code Test Explorer uses since BC 2026 wave 1).
 
 Limitations of this path:
   - BC 28.0+ ONLY. The server-side TestRunnerHub (Dev API 7.0) does not exist
-    in BC 27.x — the tool reports "Server does not support test running."
+    in older supported-on-Windows releases — the tool reports
+    "Server does not support test running."
   - The `runtests` CLI command only ships in the 18.x PRERELEASE of the dotnet
     tool (stable 17.x has publishapp but not runtests).
   - Tests do NOT run under an AL test runner codeunit (Microsoft's design):

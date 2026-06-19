@@ -16,9 +16,9 @@ on:
   workflow_dispatch:
     inputs:
       versions:
-        description: 'BC versions to test (comma-separated, e.g. "27.0,28.1")'
+        description: 'BC 28 versions to test (comma-separated, e.g. "28.1,28.2")'
         required: false
-        default: '27.0,27.1,27.2,27.3,27.4,27.5,28.0,28.1'
+        default: '28.0,28.1,28.2'
         type: string
   push:
     branches: [main, master]
@@ -43,10 +43,29 @@ jobs:
         if [ -z "$VERSIONS" ]; then
           # Default matrix when triggered by push/PR (no workflow_dispatch input).
           # Keep in sync with the workflow_dispatch input default above.
-          VERSIONS="27.0,27.1,27.2,27.3,27.4,27.5,28.0,28.1"
+          VERSIONS="28.0,28.1,28.2"
         fi
-        JSON=$(echo "$VERSIONS" | python3 -c "import sys,json; print(json.dumps({'bc_version': sys.stdin.read().strip().split(',')}))")
-        echo "matrix=$JSON" >> $GITHUB_OUTPUT
+        export VERSIONS
+        python3 - <<'PY' >> "$GITHUB_OUTPUT"
+        import json
+        import os
+        import re
+        import sys
+
+        versions = [item.strip() for item in os.environ["VERSIONS"].split(",") if item.strip()]
+        invalid = [version for version in versions if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}|latest", version)]
+        unsupported = [version for version in versions if version != "latest" and not version.startswith("28.")]
+        if not versions:
+            print("No BC versions provided. Use comma-separated BC 28 values like 28.1,28.2.", file=sys.stderr)
+            sys.exit(1)
+        if invalid:
+            print(f"Invalid BC version(s): {', '.join(invalid)}. Expected BC 28 values like 28.1,28.2 or latest.", file=sys.stderr)
+            sys.exit(1)
+        if unsupported:
+            print(f"Unsupported BC version(s): {', '.join(unsupported)}. This workflow supports BC 28 only.", file=sys.stderr)
+            sys.exit(1)
+        print("matrix=" + json.dumps({"bc_version": versions}))
+        PY
 
     - id: alcops
       # Resolve the latest ALCops.Analyzers nupkg URL via the GitHub API.
@@ -159,7 +178,7 @@ jobs:
     needs: [build-image]
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    name: Container download test (BC 28.1)
+    name: Container download test (BC 28.2)
 
     steps:
     - uses: actions/checkout@v4
@@ -179,7 +198,7 @@ jobs:
       # volume (bc-artifacts) which starts empty — forcing the entrypoint to
       # download artifacts itself. This validates the container download feature.
       env:
-        BC_VERSION: "28.1"
+        BC_VERSION: "28.2"
         BC_RUNNER_IMAGE: ${{ needs.build-image.outputs.runner_image }}
       run: |
         STEP_START=$(date +%s)
@@ -198,6 +217,81 @@ jobs:
         echo ""
         echo "Total start time (download + DB restore + BC startup): ${TOTAL_DURATION:-n/a}s"
 
+  test-no-test-toolkit:
+    needs: [build-image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    name: No test toolkit startup (BC 28.2)
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set lowercase image name
+      run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/bc-runner" >> $GITHUB_ENV
+
+    - name: Log in to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Start BC without test toolkit
+      env:
+        BC_VERSION: "28.2"
+        BC_INCLUDE_TEST_TOOLKIT: "false"
+        BC_RUNNER_IMAGE: ${{ needs.build-image.outputs.runner_image }}
+      run: |
+        docker compose up -d 2>&1 | tail -10
+        ./scripts/wait-for-bc-healthy.sh 30
+        ./scripts/verify-network-surface.sh
+        docker compose logs bc 2>&1 \
+          | grep -q "BC_INCLUDE_TEST_TOOLKIT=false: skipped test toolkit publishing"
+
+    - name: BC logs
+      if: failure()
+      run: docker compose logs bc 2>&1 | tail -200
+
+  test-webclient:
+    needs: [build-image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    name: Web client opt-in (BC 28.2)
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set lowercase image name
+      run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/bc-runner" >> $GITHUB_ENV
+
+    - name: Log in to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Start BC with web client
+      env:
+        BC_VERSION: "28.2"
+        BC_WEBCLIENT: "1"
+        BC_RUNNER_IMAGE: ${{ needs.build-image.outputs.runner_image }}
+      run: |
+        docker compose up -d 2>&1 | tail -10
+        ./scripts/wait-for-bc-healthy.sh 30
+        ./scripts/verify-network-surface.sh
+        docker compose logs bc 2>&1 \
+          | grep -q "BC_WEBCLIENT=1: starting web client"
+        status=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' http://localhost:8080 || true)
+        case "$status" in
+          2*|3*|4*) echo "web client responded with HTTP $status" ;;
+          *) echo "ERROR: web client returned HTTP ${status:-000}"; exit 1 ;;
+        esac
+
+    - name: BC logs
+      if: failure()
+      run: docker compose logs bc 2>&1 | tail -200
+
   # Exercises the macOS compose overlay (docker-compose.macos.yml) on a
   # Linux runner. GitHub-hosted macOS runners cannot run containers at
   # all — Apple's Virtualization framework forbids nested virtualization
@@ -212,7 +306,7 @@ jobs:
     needs: [build-image]
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    name: macOS overlay test (BC 28.1)
+    name: macOS overlay test (BC 28.2)
     env:
       COMPOSE_FILE: docker-compose.yml:docker-compose.macos.yml
 
@@ -241,7 +335,7 @@ jobs:
 
     - name: Start BC with macOS overlay
       env:
-        BC_VERSION: "28.1"
+        BC_VERSION: "28.2"
         BC_RUNNER_IMAGE: ${{ needs.build-image.outputs.runner_image }}
       run: |
         docker compose up -d 2>&1 | tail -10

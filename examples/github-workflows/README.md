@@ -50,9 +50,9 @@ reproducible CI runs swap it for a release tag once one exists
 | `app_dirs` | no | `""` | Space-separated dirs containing `app.json` for production apps |
 | `test_app_dirs` | **yes** | — | Space-separated dirs containing `app.json` for test apps |
 | `codeunit_range` | no | `""` | Deprecated compatibility input. This workflow no longer ships a test runner. |
-| `al_tool_version` | no | *(auto-derived from bc_version)* | AL compiler CLI tool NuGet version. Auto-derived: BC 27 -> `16.2.28.57946`, BC 28 -> `17.0.34.45391`. Set explicitly to pin. |
-| `preprocessor_symbols` | no | `""` | Comma-separated preprocessor symbols for `/preprocessorsymbols` (e.g. `"BC27PLUS,BC28PLUS"`). |
-| `runtime_version` | no | *(auto-derived from bc_version)* | Override `app.json` `runtime` before compile. Auto-derived when blank: BC 27 → `16.0`, BC 28 → `17.0`. |
+| `al_tool_version` | no | *(auto-derived from bc_version)* | AL compiler CLI tool NuGet version. Auto-derived for BC 28 as `17.0.34.45391`. Set explicitly to pin. |
+| `preprocessor_symbols` | no | `""` | Comma-separated preprocessor symbols for `/preprocessorsymbols` (e.g. `"BC28PLUS"`). |
+| `runtime_version` | no | *(auto-derived from bc_version)* | Override `app.json` `runtime` before compile. Auto-derived when blank for BC 28 as `17.0`. |
 | `runner_image` | no | public ghcr.io tag | Override the bc-runner image |
 | `runtime_ref` | no | `master` | Git ref of the Business Central runtime to check out for scripts |
 | `timeout_minutes` | no | `45` | Job timeout |

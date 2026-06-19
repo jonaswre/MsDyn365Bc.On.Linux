@@ -6,7 +6,7 @@ on:
       version:
         description: 'BC version to start'
         required: false
-        default: '27.5'
+        default: '28.2'
         type: string
       include_test_toolkit:
         description: 'Publish the default test toolkit during startup'

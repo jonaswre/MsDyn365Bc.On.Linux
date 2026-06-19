@@ -39,14 +39,14 @@ class ResolveTestRunnerAppTests(unittest.TestCase):
     def test_resolves_microsoft_test_runner_from_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             artifact_dir = pathlib.Path(tmp)
-            expected = artifact_dir / "app" / "test" / "Microsoft_Test Runner_27.app"
+            expected = artifact_dir / "app" / "test" / "Microsoft_Test Runner_28.app"
             write_app(
                 expected,
                 app_id=resolver.TEST_RUNNER_APP_ID,
                 name="Test Runner",
                 publisher="Microsoft",
-                version="27.0.0.0",
-                runtime="16.0",
+                version="28.0.0.0",
+                runtime="17.0",
             )
             write_app(
                 artifact_dir / "app" / "custom" / "ALDirectCompile_Test Runner Extension.app",
@@ -54,7 +54,7 @@ class ResolveTestRunnerAppTests(unittest.TestCase):
                 name="Test Runner Extension",
                 publisher="ALDirectCompile",
                 version="2.0.0.0",
-                runtime="16.0",
+                runtime="17.0",
             )
 
             self.assertEqual(
@@ -70,8 +70,8 @@ class ResolveTestRunnerAppTests(unittest.TestCase):
                 app_id=resolver.TEST_RUNNER_APP_ID,
                 name="Test Runner",
                 publisher="Contoso",
-                version="27.0.0.0",
-                runtime="16.0",
+                version="28.0.0.0",
+                runtime="17.0",
             )
 
             self.assertIsNone(resolver.resolve_test_runner_app(str(artifact_dir)))
@@ -79,7 +79,7 @@ class ResolveTestRunnerAppTests(unittest.TestCase):
     def test_prefers_publishable_app_over_symbols_package(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             artifact_dir = pathlib.Path(tmp)
-            publishable = artifact_dir / "app" / "Microsoft_Test Runner_27.0.app"
+            publishable = artifact_dir / "app" / "Microsoft_Test Runner_28.0.app"
             symbols = (
                 artifact_dir
                 / "app"
@@ -90,16 +90,16 @@ class ResolveTestRunnerAppTests(unittest.TestCase):
                 app_id=resolver.TEST_RUNNER_APP_ID,
                 name="Test Runner",
                 publisher="Microsoft",
-                version="27.0.0.0",
-                runtime="16.0",
+                version="28.0.0.0",
+                runtime="17.0",
             )
             write_app(
                 symbols,
                 app_id=resolver.TEST_RUNNER_APP_ID,
                 name="Test Runner",
                 publisher="Microsoft",
-                version="27.2.0.0",
-                runtime="16.0",
+                version="28.2.0.0",
+                runtime="17.0",
             )
 
             self.assertEqual(
@@ -115,8 +115,8 @@ class ResolveTestRunnerAppTests(unittest.TestCase):
                 app_id="dd0be2ea-f733-4d65-bb34-a28f4624fb14",
                 name="Library Assert",
                 publisher="Microsoft",
-                version="27.0.0.0",
-                runtime="16.0",
+                version="28.0.0.0",
+                runtime="17.0",
             )
 
             self.assertIsNone(resolver.resolve_test_runner_app(str(artifact_dir)))

@@ -40,7 +40,7 @@ class ResolveKeepAppIdsTests(unittest.TestCase):
             write_app(artifact_dir / "business-foundation.app", BUSINESS_FOUNDATION_ID, "Business Foundation")
             write_app(artifact_dir / "base-application.app", BASE_APPLICATION_ID, "Base Application")
             write_app(artifact_dir / "application.app", APPLICATION_ID, "Application")
-            write_app(consumer, "11111111-1111-1111-1111-111111111111", "Consumer", application="27.0.0.0")
+            write_app(consumer, "11111111-1111-1111-1111-111111111111", "Consumer", application="28.0.0.0")
 
             result = subprocess.run(
                 [

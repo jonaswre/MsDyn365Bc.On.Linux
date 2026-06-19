@@ -74,18 +74,16 @@ endpoints. This repo does not ship a host-side test runner.
 **Optional — only if you want to compile AL projects from the command line**
 without using the VS Code AL extension's F5 build:
 
-- `.NET 8 SDK` plus the AL compiler CLI tool. Pick the version that matches your BC major:
+- `.NET 8 SDK` plus the AL compiler CLI tool for BC 28:
 
   | BC version | AL runtime (`app.json`) | `al_tool_version` (NuGet) |
   |---|---|---|
-  | BC 27.x | `16.0` | `16.2.28.57946` |
   | BC 28.x | `17.0` | `17.0.34.45391` |
 
   ```bash
-  # BC 27.x
   dotnet tool install -g \
     Microsoft.Dynamics.BusinessCentral.Development.Tools.Linux \
-    --version 16.2.28.57946
+    --version 17.0.34.45391
   echo 'export PATH="$HOME/.dotnet/tools:$PATH"' >> ~/.bashrc
   ```
 
@@ -95,11 +93,9 @@ without using the VS Code AL extension's F5 build:
   F5 / Ctrl+F5 publishes via the dev endpoint without the CLI compiler —
   skip this section.
 
-  **Why does the smoke test use `runtime: "14.0"`?**
-  `extensions/smoke-test/app.json` uses a deliberately low runtime value so
-  the same committed file compiles cleanly against any supported BC version
-  without patching. Consumer apps should use the runtime matching their
-  minimum supported BC version (auto-derived by the workflow).
+  Consumer apps should use the runtime matching their minimum supported BC
+  version; the reusable workflow auto-derives `17.0` for BC 28 when
+  `runtime_version` is left blank.
 
 ---
 
@@ -243,9 +239,8 @@ OData/API.
 
 At startup the container resolves Microsoft Test Runner from the selected BC
 artifact tree and publishes that version-matched package. This keeps runtime
-compatibility aligned with `BC_VERSION` (for example, BC 27 uses runtime 16; BC
-28 uses runtime 17) while keeping the
-public test surface network-based.
+compatibility aligned with `BC_VERSION` while keeping the public test surface
+network-based.
 
 For end-to-end CI examples (compile + publish + test on every PR), see
 [**Templates for your own repo**](#templates-for-your-own-repo) below.
@@ -262,7 +257,7 @@ editing files:
 BC_VERSION=28.0 docker compose up -d
 
 # Change country
-BC_VERSION=27.5 BC_COUNTRY=de docker compose up -d
+BC_VERSION=28.2 BC_COUNTRY=de docker compose up -d
 
 # Change ports as a set (if defaults conflict)
 BC_CLIENT_SERVICES_PORT=17046 \
@@ -278,7 +273,7 @@ BC_CLIENT_PORT=17085 \
 
 | Variable                  | Default        | Description                                                                                                                    |
 |---------------------------|----------------|--------------------------------------------------------------------------------------------------------------------------------|
-| `BC_VERSION`              | `latest`       | BC version (e.g. `27.5`, `28.0`, `latest`, or full like `27.5.46862.48612`)                                                    |
+| `BC_VERSION`              | `latest`       | BC version (e.g. `28.2`, `latest`, or full like `28.2.51034.50938`)                                                           |
 | `BC_COUNTRY`              | `w1`           | Country/region code                                                                                                            |
 | `BC_TYPE`                 | `onprem`       | `onprem` or `sandbox`                                                                                                          |
 | `ACCEPT_EULA`             | `Y`            | Accept the Microsoft container EULA for SQL/BC startup                                                                         |
@@ -376,8 +371,8 @@ project name and port set. Docker Compose uses the project name to
 namespace all containers, networks, and volumes.
 
 ```bash
-# Instance 1: BC 27.5 on default ports
-docker compose -p bc275 up -d --wait
+# Instance 1: BC 28.1 on default ports
+BC_VERSION=28.1 docker compose -p bc281 up -d --wait
 
 # Instance 2: BC 28.0 on offset ports
 COMPOSE_PROJECT_NAME=bc280 \
@@ -394,13 +389,13 @@ BC_CLIENT_PORT=17085 \
   docker compose up -d --wait
 ```
 
-Each instance gets its own containers (`bc275-bc-1`, `bc280-bc-1`),
+Each instance gets its own containers (`bc281-bc-1`, `bc280-bc-1`),
 volumes, and network. Manage them independently:
 
 ```bash
-docker compose -p bc275 logs -f     # logs for instance 1
+docker compose -p bc281 logs -f     # logs for instance 1
 docker compose -p bc280 down        # stop instance 2
-docker compose -p bc275 down -v     # stop instance 1 + wipe its volumes
+docker compose -p bc281 down -v     # stop instance 1 + wipe its volumes
 ```
 
 **Important:** every port must be unique across instances — you'll get a
@@ -463,7 +458,7 @@ runs the full container build + smoke test sweep across multiple BC
 versions. Trigger it manually with custom versions:
 
 ```
-versions: "27.0,27.5,28.0"
+versions: "28.0,28.1,28.2"
 ```
 
 The published image is `ghcr.io/jonaswre/msdyn365bc.on.linux/bc-runner`

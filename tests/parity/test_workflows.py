@@ -13,6 +13,10 @@ class ParityWorkflowTests(unittest.TestCase):
         path = Path(".github/workflows/build-image.yml")
         return yaml.safe_load(path.read_text(encoding="utf-8"))
 
+    def versions_workflow(self):
+        path = Path(".github/workflows/test-versions.yml")
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
+
     def bc_test_from_source_workflow(self):
         path = Path(".github/workflows/bc-test-from-source.yml")
         return yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -109,6 +113,53 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertNotIn("DOTNET_GCConserveMemory", env)
         self.assertNotIn("DOTNET_GCHeapCount", env)
         self.assertNotIn("DOTNET_GCNoAffinitize", env)
+
+    def test_test_versions_defaults_to_bc28_only(self):
+        workflow = self.versions_workflow()
+        versions = workflow[True]["workflow_dispatch"]["inputs"]["versions"]["default"]
+        prepare_script = workflow["jobs"]["prepare"]["steps"][0]["run"]
+
+        self.assertEqual("28.0,28.1,28.2", versions)
+        self.assertNotIn("27.", versions)
+        self.assertIn("This workflow supports BC 28 only", prepare_script)
+
+    def test_test_versions_has_bc28_container_capability_jobs(self):
+        workflow = self.versions_workflow()
+        no_toolkit = workflow["jobs"]["test-no-test-toolkit"]
+        webclient = workflow["jobs"]["test-webclient"]
+        container_download = workflow["jobs"]["test-container-download"]
+        macos = workflow["jobs"]["test-macos-overlay"]
+        scripts = "\n".join(
+            step.get("run", "")
+            for job in (no_toolkit, webclient, container_download, macos)
+            for step in job["steps"]
+        )
+        no_toolkit_start = next(step for step in no_toolkit["steps"] if step.get("name") == "Start BC without test toolkit")
+        webclient_start = next(step for step in webclient["steps"] if step.get("name") == "Start BC with web client")
+
+        self.assertEqual("No test toolkit startup (BC 28.2)", no_toolkit["name"])
+        self.assertEqual("Web client opt-in (BC 28.2)", webclient["name"])
+        self.assertEqual("Container download test (BC 28.2)", container_download["name"])
+        self.assertEqual("macOS overlay test (BC 28.2)", macos["name"])
+        self.assertEqual("false", no_toolkit_start["env"]["BC_INCLUDE_TEST_TOOLKIT"])
+        self.assertEqual("1", webclient_start["env"]["BC_WEBCLIENT"])
+        self.assertIn("BC_INCLUDE_TEST_TOOLKIT=false: skipped test toolkit publishing", scripts)
+        self.assertIn("BC_WEBCLIENT=1: starting web client", scripts)
+        self.assertNotIn('BC_VERSION: "27.', str(workflow["jobs"]))
+
+    def test_parity_workflow_defaults_to_bc28_only(self):
+        workflow = self.workflow()
+        versions = workflow[True]["workflow_dispatch"]["inputs"]["versions"]["default"]
+        prepare_script = workflow["jobs"]["prepare"]["steps"][0]["run"]
+        build_script = "\n".join(
+            step.get("run", "")
+            for step in workflow["jobs"]["build-smoke-app"]["steps"]
+        )
+
+        self.assertEqual("28.1,28.2", versions)
+        self.assertNotIn("27.", versions)
+        self.assertNotIn("27) AL_TOOL=", build_script)
+        self.assertIn("This parity workflow supports BC 28 only", prepare_script)
 
     def test_build_job_uploads_keep_app_ids_for_linux_startup(self):
         steps = self.workflow()["jobs"]["build-smoke-app"]["steps"]
