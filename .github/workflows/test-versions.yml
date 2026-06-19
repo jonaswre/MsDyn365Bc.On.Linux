@@ -370,8 +370,9 @@ jobs:
         al --help
         al workspace compile --help
         al publishapp --help
-        ALTOOL_DLL=$(find "$HOME/.nuget/packages/microsoft.dynamics.businesscentral.development.tools/17.0.34.45391" \
-          -path "*/tools/net8.0/any/altool.dll" -type f | sort | tail -1)
+        ALTOOL_DLL=$(find "$HOME/.dotnet" "$HOME/.nuget" \
+          -path "*/microsoft.dynamics.businesscentral.development.tools/17.0.34.45391/*/altool.dll" \
+          -type f 2>/dev/null | sort | tail -1)
         if [ -z "$ALTOOL_DLL" ]; then
           echo "ERROR: could not locate altool.dll in the official package"
           exit 1
