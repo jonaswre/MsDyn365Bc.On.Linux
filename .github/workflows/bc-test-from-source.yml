@@ -1,7 +1,8 @@
 name: BC test (from source) [reusable]
 
-# Reusable workflow that compiles AL source from the calling repo, publishes
-# it to a Business Central container, and executes the AL tests.
+# Reusable workflow that compiles AL source from the calling repo and publishes
+# it to a Business Central container. Test execution is owned by the caller's
+# chosen runner against the standard BC container surface.
 #
 # Consumer usage (paste into .github/workflows/bc-test.yml in your repo):
 #
@@ -14,7 +15,6 @@ name: BC test (from source) [reusable]
 #         bc_version:     "latest"
 #         app_dirs:       "app"
 #         test_app_dirs:  "test"
-#         codeunit_range: "50000..99999"
 #
 # Inputs are documented under workflow_call below. For pre-built .app files
 # (no compile step), use bc-test-prebuilt.yml instead.
@@ -57,15 +57,10 @@ on:
         required: true
         type: string
       codeunit_range:
-        description: |
-          Test codeunit IDs to execute. This is the range of your TEST codeunits —
-          production app codeunits aren't run, only published. Accepted formats:
-            "50000..99999"                       single AL range
-            "50000..50100|130450..130459"        multiple ranges (pipe-separated)
-            "50000,50001,50002"                  explicit ids (comma-separated)
-            "50000..50100,130450,200000..210000" mixed
-        required: true
+        description: "Deprecated compatibility input. This workflow no longer ships a test runner."
+        required: false
         type: string
+        default: ""
       preprocessor_symbols:
         description: >-
           Comma-separated preprocessor symbols passed to /define
@@ -88,29 +83,18 @@ on:
         default: ""
       test_runner:
         description: >-
-          Test execution engine. "auto" (default) = probe the live server
-          after BC is healthy and use the altool runner when the dev
-          endpoint advertises Dev API 7.0 (BC 28.0+), otherwise fall back
-          to the websocket runner — leaner where supported, works
-          everywhere. "websocket" = force the OData suite + WebSocket
-          client-session flow (scripts/run-tests.sh), which works on every
-          supported BC version. "altool" = force the AL dotnet tool's
-          native `al runtests` command driving the NST's built-in
-          /dev/TestRunnerHub SignalR hub (scripts/run-tests-altool.py);
-          fails hard when the server doesn't support it — useful to catch
-          "hub stopped working" regressions that auto would silently
-          paper over. Note: the altool path runs tests WITHOUT an AL test
-          runner codeunit — AI tests are unsupported and isolation comes
-          from the RequiredTestIsolation property (default Codeunit).
+          Standard test execution engine. "auto" probes the live server and
+          runs the Microsoft AL tool's native `al runtests` command when the
+          server exposes Dev API 7.0 / TestRunnerHub. "altool" forces that
+          standard path and fails when unsupported. "none" only compiles and
+          publishes apps. This workflow does not ship a custom test runner.
         required: false
         type: string
         default: "auto"
       altool_version:
         description: >-
-          Version of the Microsoft.Dynamics.BusinessCentral.Development.Tools
-          dotnet tool used when test_runner=altool. Must be a version that
-          ships the `runtests` command — as of 2026-06 that's only the 18.x
-          prereleases (stable 17.x has publishapp but no runtests).
+          Version of Microsoft.Dynamics.BusinessCentral.Development.Tools used
+          for standard `al runtests` execution.
         required: false
         type: string
         default: "18.0.37.11445-beta"
@@ -287,21 +271,12 @@ jobs:
           TEST_APP_DIRS: ${{ inputs.test_app_dirs }}
         run: |
           bash bc-runtime/scripts/workflow-summary.sh begin RESOLVE "Resolve apps to keep"
-          # Walk the consumer's app.json files (production + test) AND
-          # this repo's custom Test Runner Extension app.json to find
-          # their declared dependencies, then resolve the transitive
-          # closure against the BC artifact extension set. The closure
-          # is added to the 5 baseline application stack apps (System /
-          # System Application / Business Foundation / Base Application /
-          # Application umbrella).
-          #
-          # The TestRunnerExtension app.json is included so its declared
-          # dependency on Microsoft Test Runner gets walked into the
-          # closure. Without this, the selective filter would wipe
-          # Microsoft Test Runner and the entrypoint's TestRunnerExtension
-          # publish would fail with AL1024 — exactly the bug that broke
-          # the bc-copilot-blueprint debugging session before this fix.
-          ARGS="--app-json bc-runtime/extensions/TestRunnerExtension/app.json"
+          # Walk the consumer's app.json files (production + test), then
+          # resolve the transitive closure against the BC artifact extension
+          # set. The closure is added to the 5 baseline application stack apps
+          # (System / System Application / Business Foundation /
+          # Base Application / Application umbrella).
+          ARGS=""
           for d in $APP_DIRS $TEST_APP_DIRS; do
             [ -z "$d" ] && continue
             if [ -f "project/$d/app.json" ]; then
@@ -444,41 +419,14 @@ jobs:
           echo "AL compiler ready: $AL_TOOL_DIR"
           bash bc-runtime/scripts/workflow-summary.sh end AL_INSTALL
 
-      # ─── altool test runner (BC 28+) ─────────────────────────────────
-      # Installs the cross-platform Microsoft.Dynamics.BusinessCentral.
-      # Development.Tools dotnet tool whose `al runtests` command drives
-      # the NST's built-in /dev/TestRunnerHub SignalR hub. This is a
-      # DIFFERENT package from the .Linux compiler package above (that one
-      # only compiles). The hub requires Dev API 7.0, which only ships
-      # with BC 28.0+:
-      #   - test_runner=altool on an older version → hard error here
-      #     (forcing altool is the "catch hub regressions" mode)
-      #   - test_runner=auto on an older version → skip the install; the
-      #     run step's live probe will route to the websocket runner
-      - name: Install AL dotnet tool (altool test runner)
-        if: inputs.test_runner != 'websocket'
+      - name: Install AL dotnet tool for standard tests
+        if: inputs.test_runner != 'none'
         run: |
           set -e
-          BC_MAJOR=$(echo "${{ inputs.bc_version }}" | cut -d. -f1)
-          if [ "$BC_MAJOR" -lt 28 ]; then
-            if [ "${{ inputs.test_runner }}" = "altool" ]; then
-              echo "ERROR: test_runner=altool requires BC 28.0+ — the server-side"
-              echo "       /dev/TestRunnerHub (Dev API 7.0) does not exist in BC ${BC_MAJOR}.x."
-              echo "       Use test_runner=auto (probes + falls back) or websocket."
-              exit 1
-            fi
-            echo "test_runner=auto on BC ${BC_MAJOR}.x — skipping altool install;"
-            echo "tests will use the websocket runner."
-            exit 0
-          fi
           dotnet tool install -g Microsoft.Dynamics.BusinessCentral.Development.Tools \
             --version "${{ inputs.altool_version }}" \
           || dotnet tool update -g Microsoft.Dynamics.BusinessCentral.Development.Tools \
             --version "${{ inputs.altool_version }}"
-          # The tool registers the lowercase `al` command. The AL compiler
-          # install step above may create an UPPERCASE `AL` wrapper for the
-          # compile path — the test step invokes this one by absolute path
-          # ($HOME/.dotnet/tools/al) so there's no case-collision ambiguity.
           "$HOME/.dotnet/tools/al" runtests --help >/dev/null
           echo "altool test runner ready: $("$HOME/.dotnet/tools/al" --version)"
 
@@ -723,93 +671,57 @@ jobs:
           bash bc-runtime/scripts/workflow-summary.sh count apps_compiled "$COMPILED_COUNT"
           bash bc-runtime/scripts/workflow-summary.sh end PUBLISH
 
-      - name: Run AL tests
-        working-directory: bc-runtime
+      - name: Run AL tests with standard tooling
         env:
-          TEST_APP_DIRS: ${{ inputs.test_app_dirs }}
           AUTH: "${{ inputs.bc_username }}:${{ inputs.bc_password }}"
+          TEST_APP_DIRS: ${{ inputs.test_app_dirs }}
         run: |
           set -e
+          REQUESTED_RUNNER="${{ inputs.test_runner }}"
+          if [ "$REQUESTED_RUNNER" = "none" ]; then
+            echo "test_runner=none: compiled and published apps only."
+            exit 0
+          fi
+
+          if ! python3 scripts/run-tests-altool.py --probe --auth "$AUTH"; then
+            if [ "$REQUESTED_RUNNER" = "altool" ]; then
+              echo "ERROR: test_runner=altool requires the standard Dev API 7.0 / TestRunnerHub surface."
+              exit 1
+            fi
+            echo "Standard AL test runner is unavailable on this server."
+            echo "MsDyn365Bc.On.Linux does not fall back to a custom test runner."
+            exit 0
+          fi
+
           bash scripts/workflow-summary.sh begin TESTS "Run AL tests"
-          # Iterate only the test apps (we know which ones from TEST_APP_DIRS).
-          # Production apps in APP_DIRS are already published but their .app
-          # files aren't fed to run-tests.sh because they have no test codeunits.
+          mkdir -p build
           TESTS_TOTAL=0
           TESTS_PASSED=0
           TESTS_FAILED=0
           CODEUNITS_TOTAL=0
-          # NOTE on the pipe: `run-tests.sh ... | tee` hides run-tests.sh's
-          # exit code behind tee's (always 0). PIPESTATUS captures the
-          # original. Without this check, even a hard publish failure or
-          # an empty test suite leaves the workflow green — which is
-          # exactly the bug that wasted multiple debugging cycles in the
-          # bc-copilot-blueprint session.
           ANY_TEST_FAILED=0
-          # ─── Select the effective test runner ─────────────────────────
-          # "auto" probes the LIVE server (BC is healthy at this point):
-          # GET /dev/metadata must advertise Dev API 7.0+ for the
-          # TestRunnerHub to exist, AND the al tool must have been
-          # installed (the install step skips it on BC < 28). Anything
-          # short of both → websocket. Explicit values pass through:
-          # "altool" without server support fails inside the script with
-          # a clear error instead of silently degrading.
-          EFFECTIVE_RUNNER="${{ inputs.test_runner }}"
-          if [ "$EFFECTIVE_RUNNER" = "auto" ]; then
-            if [ -x "$HOME/.dotnet/tools/al" ] \
-               && python3 scripts/run-tests-altool.py --probe; then
-              EFFECTIVE_RUNNER="altool"
-              echo "auto: server supports the TestRunnerHub — using the altool runner"
-            else
-              EFFECTIVE_RUNNER="websocket"
-              echo "auto: TestRunnerHub not available — using the websocket runner"
-            fi
-          fi
-          # Per-app JUnit XML output. Always emitted (no opt-in flag) — JUnit is
-          # cheap, the file is small, and downstream consumers either ingest it
-          # via the upload-artifact step below OR via their own steps that read
-          # the workspace path. AL-Go's AnalyzeTests post-step looks for these
-          # files at consumer-controlled paths, so we put them somewhere
-          # predictable: ../build/junit-<test-app-basename>.xml relative to
-          # the runtime checkout working dir (= ./build/junit-* relative to the
-          # consumer's repo root after the workflow finishes).
-          mkdir -p ../build
+
           for d in $TEST_APP_DIRS; do
             [ -z "$d" ] && continue
-            app="../build/$(basename "$d").app"
+            app="build/$(basename "$d").app"
             [ -f "$app" ] || { echo "skip: $app (not built)"; continue; }
             base=$(basename "$app")
-            junit_file="../build/junit-$(basename "$d").xml"
-            echo "=== Running tests in $base ==="
-            # Capture output so we can parse the totals for telemetry.
+            junit_file="build/junit-$(basename "$d").xml"
+            echo "=== Running tests in $base with Microsoft AL tooling ==="
             tmplog=$(mktemp)
-            if [ "$EFFECTIVE_RUNNER" = "altool" ]; then
-              # BC 28+: native `al runtests` against the NST's
-              # /dev/TestRunnerHub. The script prints the same
-              # "N total, P passed, F failed" and "Test codeunits:" lines
-              # as run-tests.sh, so the parsing below works for both.
-              python3 scripts/run-tests-altool.py \
-                --app "$app" \
-                --auth "$AUTH" \
-                --codeunit-range "${{ inputs.codeunit_range }}" \
-                --junit-output "$junit_file" \
-                --altool-cmd "$HOME/.dotnet/tools/al" \
-                --timeout 30 2>&1 | tee "$tmplog"
-            else
-              ./scripts/run-tests.sh \
-                --app "$app" \
-                --auth "$AUTH" \
-                --codeunit-range "${{ inputs.codeunit_range }}" \
-                --junit-output "$junit_file" \
-                --timeout 30 2>&1 | tee "$tmplog"
-            fi
+            python3 scripts/run-tests-altool.py \
+              --app "$app" \
+              --auth "$AUTH" \
+              --codeunit-range "${{ inputs.codeunit_range }}" \
+              --junit-output "$junit_file" \
+              --altool-cmd "$HOME/.dotnet/tools/al" \
+              --timeout 30 2>&1 | tee "$tmplog"
             RUN_TESTS_RC=${PIPESTATUS[0]}
             if [ "$RUN_TESTS_RC" -ne 0 ]; then
-              echo "ERROR: run-tests.sh exited with code $RUN_TESTS_RC for $base"
+              echo "ERROR: al runtests exited with code $RUN_TESTS_RC for $base"
               ANY_TEST_FAILED=1
             fi
-            # Parse run-tests.sh output. Current format is
-            # "total=N passed=P failed=F skipped=S"; keep the old text format
-            # for compatibility with older runtime refs.
+
             line=$(grep -oE 'total=[0-9]+ passed=[0-9]+ failed=[0-9]+|[0-9]+ total, [0-9]+ passed, [0-9]+ failed' "$tmplog" | tail -1 || true)
             if [ -n "$line" ]; then
               if [[ "$line" == total=* ]]; then
@@ -825,6 +737,7 @@ jobs:
               TESTS_PASSED=$((TESTS_PASSED + ${p:-0}))
               TESTS_FAILED=$((TESTS_FAILED + ${f:-0}))
             fi
+
             cu=$(grep -oE 'Test codeunits: [^ ]+' "$tmplog" | head -1 | sed 's/Test codeunits: //')
             if [ -n "$cu" ]; then
               n=$(echo "$cu" | tr ',' '\n' | grep -c .)
@@ -832,16 +745,15 @@ jobs:
             fi
             rm -f "$tmplog"
           done
+
           bash scripts/workflow-summary.sh count tests_total    "$TESTS_TOTAL"
           bash scripts/workflow-summary.sh count tests_passed   "$TESTS_PASSED"
           bash scripts/workflow-summary.sh count tests_failed   "$TESTS_FAILED"
           bash scripts/workflow-summary.sh count codeunits_total "$CODEUNITS_TOTAL"
           bash scripts/workflow-summary.sh end TESTS
-          # Propagate any non-zero exit from run-tests.sh (PIPESTATUS check
-          # above), AND any test failures parsed from the per-app output.
-          # Either condition fails the workflow.
+
           if [ "$ANY_TEST_FAILED" -ne 0 ]; then
-            echo "ERROR: at least one run-tests.sh invocation exited non-zero"
+            echo "ERROR: at least one standard AL test run exited non-zero"
             exit 1
           fi
           if [ "$TESTS_FAILED" -gt 0 ]; then
@@ -849,26 +761,10 @@ jobs:
             exit 1
           fi
           if [ "$TESTS_TOTAL" -eq 0 ]; then
-            echo "ERROR: no tests ran (TESTS_TOTAL=0). Either the test app"
-            echo "       failed to install or the test framework didn't see"
-            echo "       any [Test] procedures."
+            echo "ERROR: no tests ran (TESTS_TOTAL=0)."
             exit 1
           fi
 
-      # Upload per-app JUnit XML as a workflow artifact even on test failure
-      # (if: always()). Consumers can:
-      #   - Download from the run summary page for offline inspection
-      #   - Pull it from another job in the same workflow via actions/download-artifact
-      #   - Feed it to dorny/test-reporter or EnricoMi/publish-unit-test-result-action
-      #     in a follow-up step on their side (we don't auto-publish to GitHub
-      #     Checks here because each consumer may want a different reporter
-      #     UX or none at all)
-      #
-      # Name MUST include bc_version because actions/upload-artifact@v4 errors
-      # if multiple matrix jobs in the same workflow run try to upload to the
-      # same artifact name. test-versions.yml's matrix calls this reusable
-      # workflow once per BC version; without the suffix every job after the
-      # first one would fail with "409 Conflict".
       - name: Upload JUnit test results
         if: always()
         uses: actions/upload-artifact@v4

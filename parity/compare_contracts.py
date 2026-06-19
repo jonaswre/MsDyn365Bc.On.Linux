@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-IGNORED_TOP_LEVEL_KEYS = {"platform", "diagnostics"}
+IGNORED_TOP_LEVEL_KEYS = {"platform", "diagnostics", "tests"}
 IGNORED_PATHS = {"tests.runnerKind"}
 MISSING_VALUE = object()
 

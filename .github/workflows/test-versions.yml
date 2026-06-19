@@ -101,10 +101,10 @@ jobs:
       # published runner image because this workflow does not push.
       run: echo "runner_image=${{ env.IMAGE }}:latest" >> "$GITHUB_OUTPUT"
 
-  # ─── Matrix test: each BC version runs through the canonical reusable
-  #     workflow with the smoke test extension. The reusable workflow
-  #     handles BC startup parallelism, AL compile, publish (with
-  #     422-body-checking), test execution, and TESTS_TOTAL > 0 guard.
+  # ─── Matrix validation: each BC version runs through the canonical
+  #     reusable workflow with the smoke test extension. The reusable workflow
+  #     handles BC startup parallelism, AL compile, and publish with
+  #     422-body-checking.
   test:
     needs: [prepare, build-image]
     name: BC ${{ matrix.bc_version }}
@@ -117,23 +117,11 @@ jobs:
       bc_country: w1
       bc_type: onprem
       test_app_dirs: extensions/smoke-test
-      # Pipe form deliberately exercises the multi-range parser end-to-end on
-      # the hosted runner so a regression in run-tests.sh's normalization shows
-      # up here. Equivalent to the legacy "70000..70001" but covers the new
-      # code path. See scripts/run-tests.sh CODEUNIT_RANGE handling.
-      codeunit_range: "70000|70001"
-      # test_runner is left at its default ("auto"): each leg probes the
-      # live server's dev endpoint and uses `al runtests` (the AL dotnet
-      # tool's native runner driving the NST's /dev/TestRunnerHub) when
-      # Dev API 7.0+ is advertised — BC 28.0+ — falling back to the
-      # OData+WebSocket runner on older versions. See
-      # scripts/run-tests-altool.py for the altool path's limitations
-      # (no AL test runner codeunit, prerelease-only CLI, etc.).
       # Use the selected repository tag from build-image (latest) because
       # test-versions does not publish images.
       runner_image: ${{ needs.build-image.outputs.runner_image }}
-      # Pin the bc-linux scripts checkout to this commit too, so a test
-      # at SHA X uses entrypoint.sh / run-tests.sh / publish-app.sh /
+      # Pin the runtime scripts checkout to this commit too, so validation
+      # at SHA X uses entrypoint.sh / publish-app.sh /
       # wait-for-bc-healthy.sh from SHA X. Without this we'd test the
       # SHA X image with master scripts.
       runtime_ref: ${{ github.sha }}

@@ -55,11 +55,10 @@ BC_ODATA_PORT=17048 BC_API_PORT=17052 scripts/verify-network-surface.sh`.
 
 ## Requirements
 
-Just to start BC and run AL tests:
+Just to start BC with the Microsoft test toolkit available:
 
 - Docker with Compose v2
-- `python3`, `curl`, `unzip` (used by `scripts/run-tests.sh` for symbol
-  parsing and OData calls)
+- `python3`, `curl`, `unzip`
 - ~4 GB RAM (2 GB SQL + 1-2 GB BC)
 - ~3 GB disk for artifacts (downloaded once, cached in Docker volumes)
 
@@ -70,11 +69,7 @@ That's it — **no .NET SDK on the host is required** for the normal container
 surface. Providers and tools should treat the container like a Business Central
 container: publish over dev services, talk to OData/API over HTTP, and run
 tests through the exposed Client Services/WebClient or OData/API automation
-endpoints. The WebSocket test runner used by `run-tests.sh` is bundled inside
-the bc-runner image and invoked via `docker compose exec`, so all the .NET work
-happens in the container. If `run-tests.sh` is pointed at a remote BC instead
-of a local docker, it falls back to `dotnet run` from the host source; that
-fallback path needs the .NET 8 SDK.
+endpoints. This repo does not ship a host-side test runner.
 
 **Optional — only if you want to compile AL projects from the command line**
 without using the VS Code AL extension's F5 build:
@@ -233,98 +228,24 @@ curl -u "$BC_AUTH" -X POST \
 
 ## Running AL tests
 
-The test framework (Test Runner, Library Assert, Library Variable Storage,
-Permissions Mock, Any) is published automatically on first boot of the BC
-container, so a fresh `docker compose up -d --wait` is enough — no extra
-setup. Set `BC_INCLUDE_TEST_TOOLKIT=false` to start without that test surface;
-startup also clears stock test framework entries so the container does not
-expose a partial toolkit.
+The Microsoft test framework (Test Runner, Library Assert, Library Variable
+Storage, Permissions Mock, Any) is published automatically on first boot of the
+BC container, so a fresh `docker compose up -d --wait` is enough to expose the
+standard Business Central test-tool surface. Set
+`BC_INCLUDE_TEST_TOOLKIT=false` to start without that test surface; startup also
+clears stock test framework entries so the container does not expose a partial
+toolkit.
 
-```bash
-# Auto-discover test codeunits from the .app's symbols
-./scripts/run-tests.sh --app MyTestApp.app
+Run tests with your preferred external runner against the standard container
+ports. Publish apps through the dev endpoint, then drive the stock Business
+Central test pages or automation APIs through Client Services/WebClient and
+OData/API.
 
-# Provider/automation path: use the standard Business Central container
-# network surface. Publish the app to the dev endpoint, then run tests through
-# Client Services/WebClient and the OData automation API.
-al run --env my-bc --workspace .
-al test --env my-bc --workspace . --suite DEFAULT
-
-# Same, but limit to specific codeunits. --codeunit-range accepts:
-#   50000                                  single id
-#   50000..50099                           single AL range
-#   "50000..50099|130450..130459"          multiple ranges (pipe-separated)
-#   "50000,50001,50002"                    explicit ids
-#   "50000..50099,130450,200000..210000"   mixed
-./scripts/run-tests.sh --app MyTestApp.app --codeunit-range 50000
-./scripts/run-tests.sh --app MyTestApp.app --codeunit-range "50000..50099|130450..130459"
-```
-
-`run-tests.sh` defaults to the standard container base URL
-`http://localhost:7046/BC` and derives the Dev, API, and OData service URLs
-from that base. Pass `--base-url` only when the container ports are mapped to
-non-default host ports or when running from another container or VM.
-
-When `--app` is provided the script reads `SymbolReference.json` from the
-`.app` zip, walks for codeunits with `Subtype = Test`, and intersects with
-`--codeunit-range` if also provided. This avoids the SetupSuite call having
-to iterate tens of thousands of nonexistent IDs. `--suite` defaults to
-`DEFAULT` and is passed through the Test Runner API, so callers can use the
-same suite name they use with other Docker-based BC test flows.
-
-Sample output:
-
-```
-=== BC Test Runner ===
-Company: CRONUS International Ltd.
-Test codeunits: 50000,50004
-Setting up test suite... OK
-
-=== Running Tests ===
-Executing 2 codeunit(s) via OData/API...
-total=3 passed=3 failed=0 skipped=0
-PASSED  50000.TestCustomerCreation
-PASSED  50000.TestSalesOrderPosting
-PASSED  50004.TestSomethingElse
-```
-
-### JUnit XML output
-
-Pass `--junit-output <path>` to also write per-test results as a JUnit
-XML file, compatible with GitHub Checks reporters
-([dorny/test-reporter](https://github.com/dorny/test-reporter),
-[EnricoMi/publish-unit-test-result-action](https://github.com/EnricoMi/publish-unit-test-result-action)),
-the Azure DevOps "Publish Test Results" task, and any other CI tool that
-ingests JUnit:
-
-```bash
-./scripts/run-tests.sh --app MyTestApp.app --junit-output ./test-results.xml
-```
-
-Each codeunit becomes one `<testsuite>`, each `[Test]` procedure one
-`<testcase>`. Failing tests carry the BC error message in the `message`
-attribute and the full AL call stack in the `<failure>` body.
-
-The reusable workflows (`bc-test-from-source.yml`, `bc-test-prebuilt.yml`)
-emit JUnit XML automatically (no opt-in needed) and upload it as a
-`junit-test-results` workflow artifact.
-
-`extensions/TestRunnerExtension/MicrosoftTestRunnerPatched.app` is a patched
-Microsoft Test Runner build used by the container before publishing the wrapper
-extension. It keeps the public test surface network-based and lets the wrapper
-initialize and drain Microsoft code coverage through OData/API instead of
-container internals. Rebuild it after changing BC artifacts or compiler version:
-
-```bash
-scripts/build-patched-test-runner.sh \
-  --test-runner-app "extensions/TestRunnerExtension/.alpackages/Microsoft_Test Runner_28.1.49838.51179.app" \
-  --package-cache "build/local-smoke/symbols"
-```
-
-The package cache must include the platform and application symbols used to
-compile Microsoft Test Runner, including `System.app`,
-`Microsoft_Application_*.app`, `Microsoft_System Application_*.app`, and
-`Microsoft_Business Foundation_*.app`.
+At startup the container resolves Microsoft Test Runner from the selected BC
+artifact tree and publishes that version-matched package. This keeps runtime
+compatibility aligned with `BC_VERSION` (for example, BC 27 uses runtime 16; BC
+28 uses runtime 17) while keeping the
+public test surface network-based.
 
 For end-to-end CI examples (compile + publish + test on every PR), see
 [**Templates for your own repo**](#templates-for-your-own-repo) below.
@@ -363,8 +284,8 @@ BC_CLIENT_PORT=17085 \
 | `ACCEPT_EULA`             | `Y`            | Accept the Microsoft container EULA for SQL/BC startup                                                                         |
 | `BC_USERNAME`             | `admin`        | NavUserPassword username for OData/API/Dev/WebClient access                                                                    |
 | `BC_PASSWORD`             | `admin`        | NavUserPassword password for OData/API/Dev/WebClient access                                                                    |
-| `BC_INCLUDE_TEST_TOOLKIT` | `true`         | Publish the test toolkit and Test Runner API during startup. When `false`, stock test framework entries are cleared as well.    |
-| `BC_MEMORY_LIMIT`         | `8G`           | Docker memory limit for the BC service container                                                                               |
+| `BC_INCLUDE_TEST_TOOLKIT` | `true`         | Publish the Microsoft test toolkit during startup. When `false`, stock test framework entries are cleared as well.              |
+| `BC_MEMORY_LIMIT`         | `12G`          | Docker memory limit for the BC service container                                                                               |
 | `MSSQL_MEMORY_LIMIT_MB`   | `2048`         | SQL Server memory limit in MB                                                                                                  |
 | `BC_DNS`                  | unset          | Optional DNS server for the BC service container                                                                               |
 | `BC_API_REQUEST_LIMIT`    | `50`           | OData/API per-user concurrency limit. Set `0` to leave artifact defaults                                                       |
@@ -422,7 +343,7 @@ accessible — no GHCR auth needed.
 Cleanest consumer experience (10-line `.github/workflows/bc-test.yml`):
 
 ```yaml
-name: BC Tests
+name: BC Container Publish
 on: [push, pull_request, workflow_dispatch]
 jobs:
   bc-tests:
@@ -431,12 +352,10 @@ jobs:
       bc_version:     "latest"
       app_dirs:       "app"
       test_app_dirs:  "test"
-      codeunit_range: "50000..99999"
 ```
 
 See [`examples/github-workflows/README.md`](./examples/github-workflows/README.md)
-and [`examples/azure-pipelines/README.md`](./examples/azure-pipelines/README.md)
-for full input documentation, troubleshooting, and inlined alternatives.
+for full input documentation and troubleshooting.
 
 ---
 

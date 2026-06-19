@@ -2,13 +2,13 @@
 """
 run-tests-altool.py — Run AL tests via the AL dotnet tool's native test runner.
 
-EXPERIMENTAL alternative to run-tests.sh. Instead of the OData suite-population
-+ WebSocket client-session flow, this drives the NST's built-in SignalR hub at
+EXPERIMENTAL standard-tooling test runner. This drives the NST's built-in
+SignalR hub at
 <dev-endpoint>/dev/TestRunnerHub through `al runtests` from the
 Microsoft.Dynamics.BusinessCentral.Development.Tools dotnet tool (the same
 mechanism the VS Code Test Explorer uses since BC 2026 wave 1).
 
-Why run-tests.sh still exists (limitations of this path):
+Limitations of this path:
   - BC 28.0+ ONLY. The server-side TestRunnerHub (Dev API 7.0) does not exist
     in BC 27.x — the tool reports "Server does not support test running."
   - The `runtests` CLI command only ships in the 18.x PRERELEASE of the dotnet
@@ -37,7 +37,7 @@ Usage:
 
 Authentication: the AL tool reads BC_SERVER_USERNAME / BC_SERVER_PASSWORD
 from the environment for --authentication UserPassword. This script sets
-them from --auth (default BCRUNNER:Admin123!, same as run-tests.sh).
+them from --auth.
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ UNSUPPORTED_MARKER = "Server does not support test running"
 def parse_range_spans(expr: str) -> list[tuple[int, int]]:
     """Parse a codeunit range expression into (lo, hi) spans.
 
-    Accepts the same shapes as run-tests.sh: "50000", "50000..50100",
+    Accepts "50000", "50000..50100",
     "50000..50100|130450..130459", "50000,50001", and mixed. The
     already-normalized "lo-hi" form is accepted too.
     """
@@ -105,7 +105,7 @@ def in_spans(spans: list[tuple[int, int]], cuid: int) -> bool:
 def discover_test_codeunits(app_path: str, spans: list[tuple[int, int]]) -> list[int]:
     """Extract Subtype=Test codeunit IDs from the .app's SymbolReference.json.
 
-    Same strategy as run-tests.sh: always discover from the symbol so we
+    Always discover from the symbol so we
     only invoke the runner for codeunits that actually exist (a literal
     "50000..99999" range would otherwise mean tens of thousands of hub
     round-trips). The optional range filter intersects.
@@ -249,7 +249,7 @@ def run_codeunit(
     run.elapsed_seconds = time.monotonic() - start
 
     # Echo the raw tool output (indented) — verbose-by-default is a repo
-    # invariant; silent failures cost debugging cycles (see run-tests.sh).
+    # invariant; silent failures cost debugging cycles.
     for line in output.splitlines():
         print(f"    {line}")
 
@@ -379,10 +379,10 @@ def main() -> int:
     )
     ap.add_argument("--app", default="", help="compiled test .app (for codeunit discovery; must already be published+installed). Required unless --probe.")
     ap.add_argument("--probe", action="store_true", help="don't run tests — just check whether the server supports the TestRunnerHub. Exit 0 = supported, 2 = not supported/unreachable. Used by the workflow's test_runner=auto mode.")
-    ap.add_argument("--codeunit-range", default="", help="range filter, same syntax as run-tests.sh")
+    ap.add_argument("--codeunit-range", default="", help="range filter such as 50000, 50000..50100, or 50000|50001")
     ap.add_argument("--junit-output", default="", help="write JUnit XML to this path")
     ap.add_argument("--company", default="", help="company name (default: auto-detect via OData)")
-    ap.add_argument("--auth", default="BCRUNNER:Admin123!", help="user:pass (default matches run-tests.sh)")
+    ap.add_argument("--auth", default="BCRUNNER:Admin123!", help="user:pass")
     ap.add_argument("--server", default="http://localhost", help="BC server URL, no port (default http://localhost)")
     ap.add_argument("--server-instance", default="BC", help="NST instance name (default BC)")
     ap.add_argument("--port", type=int, default=7049, help="dev endpoint port (default 7049)")
@@ -430,7 +430,7 @@ def main() -> int:
     if not supported:
         print(f"ERROR: {reason}")
         print("       The altool runner needs BC 28.0+ (Dev API 7.0 / TestRunnerHub).")
-        print("       Use run-tests.sh (websocket runner) for this server.")
+        print("       This repository does not provide a custom fallback runner.")
         return 1
 
     company = args.company

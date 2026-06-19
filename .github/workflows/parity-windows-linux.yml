@@ -85,22 +85,6 @@ jobs:
             --artifact-dir "artifact-cache/$BC_VERSION" \
             --app-json extensions/smoke-test/app.json \
             --out-dir extensions/smoke-test/.alpackages
-          TEST_RUNNER_APP=$(python3 - <<'PY'
-          import sys
-
-          sys.path.insert(0, "scripts")
-          from _bcapp import load_artifact_apps  # noqa
-
-          apps = load_artifact_apps(f"artifact-cache/{__import__('os').environ['BC_VERSION']}")
-          for info in apps.values():
-              if info.get("publisher") == "Microsoft" and info.get("name") == "Test Runner":
-                  print(info["path"])
-                  break
-          else:
-              print("Microsoft Test Runner app not found in artifacts", file=sys.stderr)
-              sys.exit(1)
-          PY
-          )
           python3 - <<'PY'
           import os
           import json
@@ -111,73 +95,17 @@ jobs:
           path.write_text(json.dumps(data, indent=2) + "\n")
           PY
           "$HOME/al" compile "/project:extensions/smoke-test" "/packagecachepath:extensions/smoke-test/.alpackages" "/out:smoke-test-$BC_VERSION.app"
-          AL_COMPILER="$HOME/al" scripts/build-patched-test-runner.sh \
-            --test-runner-app "$TEST_RUNNER_APP" \
-            --package-cache extensions/smoke-test/.alpackages \
-            --out "patched-test-runner-$BC_VERSION.app"
-          rm -rf extensions/TestRunnerExtension/.alpackages
-          python3 scripts/stage-symbols.py \
-            --artifact-dir "artifact-cache/$BC_VERSION" \
-            --app-json extensions/TestRunnerExtension/app.json \
-            --out-dir extensions/TestRunnerExtension/.alpackages
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          path = Path("extensions/TestRunnerExtension/app.json")
-          data = json.loads(path.read_text())
-          data["runtime"] = os.environ["RUNTIME"]
-          for dep in data.get("dependencies", []):
-              if dep.get("id", "").lower() == "23de40a6-dfe8-4f80-80db-d70f83ce8caf":
-                  dep["version"] = f"{os.environ['BC_MAJOR']}.0.0.0"
-          path.write_text(json.dumps(data, indent=2) + "\n")
-          PY
-          python3 - <<'PY'
-          from pathlib import Path
-          import sys
-
-          sys.path.insert(0, "scripts")
-          from _bcapp import read_app_info  # noqa
-
-          cache = Path("extensions/TestRunnerExtension/.alpackages")
-          test_runner_id = "23de40a6-dfe8-4f80-80db-d70f83ce8caf"
-          for path in cache.glob("*.app"):
-              info = read_app_info(str(path))
-              if info and info.get("id") == test_runner_id:
-                  path.unlink()
-          PY
-          cp "patched-test-runner-$BC_VERSION.app" extensions/TestRunnerExtension/.alpackages/
-          "$HOME/al" compile "/project:extensions/TestRunnerExtension" "/packagecachepath:extensions/TestRunnerExtension/.alpackages" "/out:test-runner-extension-$BC_VERSION.app"
           AUTOMATION_API_V2_APP_ID=10cb69d9-bc8a-4d27-970a-9e110e9db2a5
           python3 scripts/resolve-keep-app-ids.py \
             --artifact-dir "artifact-cache/$BC_VERSION" \
             --app-json extensions/smoke-test/app.json \
-            --app-json extensions/TestRunnerExtension/app.json \
-            --app-file "patched-test-runner-$BC_VERSION.app" \
-            --app-file "test-runner-extension-$BC_VERSION.app" \
             --extra-ids "$AUTOMATION_API_V2_APP_ID" \
             > "keep-app-ids-$BC_VERSION.txt"
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
-
-          # Do not preserve the stock Microsoft Test Runner. The Linux
-          # contract publishes a patched Test Runner that grants the custom
-          # runner extension access to Microsoft test internals.
-          path = Path(f"keep-app-ids-{os.environ['BC_VERSION']}.txt")
-          test_runner_id = "23de40a6-dfe8-4f80-80db-d70f83ce8caf"
-          ids = {item.strip().lower() for item in path.read_text().split(",") if item.strip()}
-          ids.discard(test_runner_id)
-          path.write_text(",".join(sorted(ids)) + "\n")
-          PY
       - uses: actions/upload-artifact@v4
         with:
           name: smoke-app-${{ matrix.bc_version }}
           path: |
             smoke-test-${{ matrix.bc_version }}.app
-            patched-test-runner-${{ matrix.bc_version }}.app
-            test-runner-extension-${{ matrix.bc_version }}.app
             keep-app-ids-${{ matrix.bc_version }}.txt
 
   linux-contract:
@@ -194,7 +122,7 @@ jobs:
       BC_USERNAME: admin
       BC_PASSWORD: admin
       BC_CLEAR_ALL_APPS: 'false'
-      BC_INCLUDE_TEST_TOOLKIT: 'false'
+      BC_INCLUDE_TEST_TOOLKIT: 'true'
       BC_MEMORY_LIMIT: 12G
       MSSQL_MEMORY_LIMIT_MB: 1024
     steps:
@@ -212,6 +140,11 @@ jobs:
           fi
           echo "BC_KEEP_APP_IDS=$KEEP_IDS" >> "$GITHUB_ENV"
           echo "Computed $(printf '%s' "$KEEP_IDS" | tr ',' '\n' | wc -l) keep app id(s)"
+      - name: Install standard AL test tooling
+        run: |
+          dotnet tool install -g Microsoft.Dynamics.BusinessCentral.Development.Tools --version 18.0.37.11445-beta \
+          || dotnet tool update -g Microsoft.Dynamics.BusinessCentral.Development.Tools --version 18.0.37.11445-beta
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
       - name: Start Linux BC
         run: |
           free -h
@@ -227,9 +160,7 @@ jobs:
           parity/collect-linux-contract.sh \
             "build/smoke-test-$BC_VERSION.app" \
             "$BC_VERSION" \
-            "contracts/linux-$BC_VERSION.json" \
-            "build/patched-test-runner-$BC_VERSION.app" \
-            "build/test-runner-extension-$BC_VERSION.app"
+            "contracts/linux-$BC_VERSION.json"
       - name: Capture Linux diagnostics
         if: failure()
         run: |

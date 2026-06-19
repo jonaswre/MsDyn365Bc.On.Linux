@@ -33,6 +33,5 @@ which the image's non-root mssql user cannot write to):
 docker compose -f docker-compose.yml -f docker-compose.macos.yml up -d --wait
 ```
 
-Everything else (ports, env vars like `BC_VERSION`/`BC_COUNTRY`, running
-tests via `scripts/run-tests.sh`) works the same as on Linux.
-
+Everything else (ports and env vars like `BC_VERSION`/`BC_COUNTRY`) works the
+same as on Linux.

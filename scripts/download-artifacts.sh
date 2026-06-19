@@ -19,6 +19,18 @@ _ms() { date +%s%3N; }
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 EXTRACT_ZIP="$SCRIPT_DIR/extract-zip-normalized.py"
 
+unzip_allow_warnings() {
+    local status
+    set +e
+    unzip "$@"
+    status=$?
+    set -e
+    if [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; then
+        return 0
+    fi
+    return "$status"
+}
+
 # Parse arguments: either (url, dest) or (type, version, country, dest)
 if [ $# -eq 2 ]; then
     APP_URL="$1"

@@ -1378,8 +1378,8 @@ from _bcapp import load_artifact_apps
 apps = load_artifact_apps(sys.argv[1])
 # Core test framework (wiped from SQL, need republish) + test toolkit
 # apps that aren't in the default database but most test apps depend on.
-# Test Runner is installed later from /bc/testrunner/MicrosoftTestRunnerPatched.app
-# so the wrapper can access internal coverage APIs.
+# Test Runner is installed later from the selected BC artifact tree so runtime
+# compatibility follows BC_VERSION instead of the baked image build.
 # This list rarely changes — last change was ~5 years ago.
 NAMES = {
     "Library Assert", "Library Variable Storage",
@@ -1434,29 +1434,22 @@ PYEOF
             done
         fi
 
-        # Publish patched Microsoft Test Runner first. The patch grants the
-        # wrapper extension access to the internal code coverage manager so the
-        # container can expose the standard network test coverage surface.
-        if [ "$BC_INCLUDE_TEST_TOOLKIT_ENABLED" = "true" ] && [ -f /bc/testrunner/MicrosoftTestRunnerPatched.app ]; then
-            echo "[entrypoint] Publishing patched Microsoft Test Runner..."
-            publish_required_app "/bc/testrunner/MicrosoftTestRunnerPatched.app" \
-                "forcesync" "Patched Microsoft Test Runner" 60 || exit 1
-        elif [ "$BC_INCLUDE_TEST_TOOLKIT_ENABLED" = "true" ]; then
-            echo "[entrypoint] ERROR: /bc/testrunner/MicrosoftTestRunnerPatched.app is missing"
-            exit 1
+        # Publish the Microsoft Test Runner from the selected BC artifact tree.
+        # Runtime compatibility is owned by the artifact version: BC 27 ships a
+        # runtime 16 Test Runner, BC 28 ships runtime 17, and so on.
+        if [ "$BC_INCLUDE_TEST_TOOLKIT_ENABLED" = "true" ]; then
+            TEST_RUNNER_APP=$(python3 /bc/scripts/resolve-test-runner-app.py "$ARTIFACTS")
+            if [ -z "$TEST_RUNNER_APP" ] || [ ! -f "$TEST_RUNNER_APP" ]; then
+                echo "[entrypoint] ERROR: Microsoft Test Runner app was not found in $ARTIFACTS"
+                exit 1
+            fi
+            echo "[entrypoint] Publishing Microsoft Test Runner from artifacts..."
+            publish_required_app "$TEST_RUNNER_APP" \
+                "synchronize" "Microsoft Test Runner" 120 || exit 1
         fi
 
-        # Publish our TestRunner Extension (custom API for test execution, depends on MS Test Runner)
-        if [ "$BC_INCLUDE_TEST_TOOLKIT_ENABLED" = "true" ] && [ -f /bc/testrunner/TestRunner.app ]; then
-            echo "[entrypoint] Publishing Test Runner Extension..."
-            publish_required_app "/bc/testrunner/TestRunner.app" \
-                "synchronize" "Test Runner Extension" 30 || exit 1
-        elif [ "$BC_INCLUDE_TEST_TOOLKIT_ENABLED" = "true" ]; then
-            echo "[entrypoint] ERROR: /bc/testrunner/TestRunner.app is missing"
-            exit 1
-        fi
         if [ "$BC_INCLUDE_TEST_TOOLKIT_ENABLED" != "true" ]; then
-            echo "[entrypoint] BC_INCLUDE_TEST_TOOLKIT=false: skipped test toolkit and Test Runner publishing"
+            echo "[entrypoint] BC_INCLUDE_TEST_TOOLKIT=false: skipped test toolkit publishing"
         fi
     fi
     TOTAL_ELAPSED=$(( $(date +%s) - ENTRYPOINT_START ))
