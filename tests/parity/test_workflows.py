@@ -229,6 +229,11 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertEqual("type=gha", build_only["with"]["cache-from"])
         self.assertEqual("type=gha,mode=max", build_only["with"]["cache-to"])
 
+    def test_build_image_workflow_runs_when_it_changes(self):
+        workflow = self.build_image_workflow()
+
+        self.assertIn(".github/workflows/build-image.yml", workflow[True]["push"]["paths"])
+
     def _build_image_step(self, name):
         steps = self.build_image_workflow()["jobs"]["build-push"]["steps"]
         return next(step for step in steps if step.get("name") == name)
