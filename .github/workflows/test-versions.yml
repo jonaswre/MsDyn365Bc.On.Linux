@@ -454,6 +454,8 @@ jobs:
       env:
         BC_SERVER_USERNAME: admin
         BC_SERVER_PASSWORD: admin
+        COLUMNS: 120
+        TERM: xterm
       run: |
         set -e
         mkdir -p official-build official-logs
