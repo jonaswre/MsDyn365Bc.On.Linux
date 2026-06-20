@@ -332,8 +332,9 @@ jobs:
 
   # Uses Microsoft's official AL development tool as an external bench against
   # the Linux container. This validates that the standard CI-facing tool can
-  # compile a workspace and publish the resulting app to the container's dev
-  # endpoint without any custom runner or in-container helper.
+  # compile a workspace, publish the resulting app, and execute AL tests
+  # against the container's dev endpoint without any custom runner or
+  # in-container helper.
   test-official-altool:
     needs: [build-image]
     runs-on: ubuntu-latest
@@ -361,17 +362,18 @@ jobs:
     - name: Install official AL development tool
       run: |
         dotnet tool install -g Microsoft.Dynamics.BusinessCentral.Development.Tools \
-          --version "17.0.34.45391" \
+          --version "18.0.37.11445-beta" \
         || dotnet tool update -g Microsoft.Dynamics.BusinessCentral.Development.Tools \
-          --version "17.0.34.45391"
+          --version "18.0.37.11445-beta"
         echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
         export PATH="$HOME/.dotnet/tools:$PATH"
         al --version
         al --help
         al workspace compile --help
         al publishapp --help
+        al runtests --help
         ALTOOL_DLL=$(find "$HOME/.dotnet" "$HOME/.nuget" \
-          -path "*/microsoft.dynamics.businesscentral.development.tools/17.0.34.45391/*/altool.dll" \
+          -path "*/microsoft.dynamics.businesscentral.development.tools/18.0.37.11445-beta/*/altool.dll" \
           -type f 2>/dev/null | sort | tail -1)
         if [ -z "$ALTOOL_DLL" ]; then
           echo "ERROR: could not locate altool.dll in the official package"
@@ -520,7 +522,7 @@ jobs:
         COLUMNS: 120
         TERM: xterm
       run: |
-        set -e
+        set -eo pipefail
         mkdir -p official-build official-logs
         dotnet "$ALTOOL_DLL" workspace compile official-altool-smoke.code-workspace \
           --packagecachepath "$(pwd)/official-symbols" \
@@ -547,12 +549,22 @@ jobs:
           --environmentType "OnPrem" \
           --authentication "UserPassword" \
           --schemaUpdateMode "ForceSync"
+        dotnet "$ALTOOL_DLL" runtests 99800 \
+          --server "http://localhost" \
+          --serverinstance "BC" \
+          --port 7049 \
+          --environmenttype "OnPrem" \
+          --authentication "UserPassword" \
+          | tee official-test-results.log
+        grep -q "Test run completed: 2 passed, 0 failed, 0 skipped." official-test-results.log
 
     - name: Official AL tool bench diagnostics
       if: failure()
       run: |
         echo "=== official AL tool logs ==="
         find official-logs -type f -maxdepth 2 -print -exec sed -n '1,160p' {} \; || true
+        echo "=== official AL tool test results ==="
+        cat official-test-results.log || true
         echo "=== BC logs ==="
         docker compose logs bc 2>&1 | tail -200 || true
 

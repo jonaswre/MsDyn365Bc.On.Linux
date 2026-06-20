@@ -156,8 +156,10 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn("BC_INCLUDE_TEST_TOOLKIT=false: skipped test toolkit publishing", scripts)
         self.assertIn("BC_WEBCLIENT=1: starting web client", scripts)
         self.assertIn("Microsoft.Dynamics.BusinessCentral.Development.Tools", scripts)
+        self.assertIn("18.0.37.11445-beta", scripts)
         self.assertIn("al workspace compile", scripts)
         self.assertIn("al publishapp", scripts)
+        self.assertIn("al runtests", scripts)
         self.assertIn("ALTOOL_DLL", scripts)
         self.assertIn("AL_TOOL_DIR", scripts)
         self.assertIn("OFFICIAL_AL_BIN", scripts)
@@ -173,8 +175,11 @@ class ParityWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(120, compile_step["env"]["COLUMNS"])
         self.assertEqual("xterm", compile_step["env"]["TERM"])
+        self.assertIn("set -eo pipefail", compile_step["run"])
         self.assertIn('dotnet "$ALTOOL_DLL" workspace compile', scripts)
         self.assertIn('dotnet "$ALTOOL_DLL" publishapp', scripts)
+        self.assertIn('dotnet "$ALTOOL_DLL" runtests 99800', scripts)
+        self.assertIn("Test run completed: 2 passed, 0 failed, 0 skipped.", scripts)
         self.assertNotIn('BC_VERSION: "27.', str(workflow["jobs"]))
 
     def test_primary_workflows_cancel_stale_runs(self):
