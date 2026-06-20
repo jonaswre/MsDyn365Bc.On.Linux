@@ -380,6 +380,7 @@ jobs:
         echo "ALTOOL_DLL=$ALTOOL_DLL" >> "$GITHUB_ENV"
         dotnet "$ALTOOL_DLL" --version
         AL_TOOL_DIR=$(dirname "$ALTOOL_DLL")
+        echo "AL_TOOL_DIR=$AL_TOOL_DIR" >> "$GITHUB_ENV"
         OFFICIAL_AL_BIN="$RUNNER_TEMP/official-altool-bin"
         mkdir -p "$OFFICIAL_AL_BIN"
         cat > "$OFFICIAL_AL_BIN/alc" <<SH
@@ -449,6 +450,68 @@ jobs:
         JSON
 
         docker compose up -d 2>&1 | tail -10
+
+    - name: Seed official AL tool UserPassword cache
+      env:
+        BC_SERVER_USERNAME: admin
+        BC_SERVER_PASSWORD: admin
+      run: |
+        set -e
+        SEED_DIR="$RUNNER_TEMP/altool-userpassword-cache"
+        mkdir -p "$SEED_DIR"
+        cat > "$SEED_DIR/SeedAlToolUserPasswordCache.csproj" <<'XML'
+        <Project Sdk="Microsoft.NET.Sdk">
+          <PropertyGroup>
+            <OutputType>Exe</OutputType>
+            <TargetFramework>net8.0</TargetFramework>
+            <ImplicitUsings>enable</ImplicitUsings>
+            <Nullable>enable</Nullable>
+          </PropertyGroup>
+          <ItemGroup>
+            <FrameworkReference Include="Microsoft.AspNetCore.App" />
+          </ItemGroup>
+        </Project>
+        XML
+        cat > "$SEED_DIR/Program.cs" <<'CS'
+        using System.Reflection;
+        using System.Text;
+        using System.Text.Json;
+        using Microsoft.AspNetCore.DataProtection;
+
+        var toolDir = args[0];
+        var altoolDll = args[1];
+        var server = args[2];
+        var serverInstance = args[3];
+        var username = args[4];
+        var password = args[5];
+
+        var key = $"{server.ToLowerInvariant()}_{serverInstance.ToLowerInvariant()}";
+        var cache = new Dictionary<string, UsernamePassword>
+        {
+            [key] = new(username, password),
+        };
+        var json = JsonSerializer.Serialize(cache);
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var altoolAssemblyName = AssemblyName.GetAssemblyName(altoolDll).FullName
+            ?? throw new InvalidOperationException("Could not read altool assembly name.");
+        var protectorDirectory = Path.Combine(appData, altoolAssemblyName);
+        Directory.CreateDirectory(protectorDirectory);
+        var provider = DataProtectionProvider.Create(new DirectoryInfo(protectorDirectory));
+        var purpose = Uri.EscapeDataString("Microsoft.Dynamics.BusinessCentral.EditorService.Data");
+        var protectedPayload = provider.CreateProtector(purpose).Protect(Encoding.UTF8.GetBytes(json));
+        var cachePath = Path.Combine(toolDir, "UserPasswordCache.dat");
+        File.WriteAllBytes(cachePath, protectedPayload);
+        Console.WriteLine($"Seeded {cachePath} for {key}");
+
+        internal sealed record UsernamePassword(string Username, string Password);
+        CS
+        dotnet run --project "$SEED_DIR" -- \
+          "$AL_TOOL_DIR" \
+          "$ALTOOL_DLL" \
+          "http://localhost" \
+          "BC" \
+          "$BC_SERVER_USERNAME" \
+          "$BC_SERVER_PASSWORD"
 
     - name: Compile and publish with official AL tool
       env:

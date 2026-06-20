@@ -159,8 +159,13 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn("al workspace compile", scripts)
         self.assertIn("al publishapp", scripts)
         self.assertIn("ALTOOL_DLL", scripts)
+        self.assertIn("AL_TOOL_DIR", scripts)
         self.assertIn("OFFICIAL_AL_BIN", scripts)
         self.assertIn("alc.dll", scripts)
+        self.assertIn("Seed official AL tool UserPassword cache", str(official))
+        self.assertIn("UserPasswordCache.dat", scripts)
+        self.assertIn("DataProtectionProvider.Create", scripts)
+        self.assertIn("AssemblyName.GetAssemblyName", scripts)
         compile_step = next(
             step
             for step in official["steps"]
