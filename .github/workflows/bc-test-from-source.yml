@@ -41,12 +41,17 @@ on:
         description: "NavUserPassword username for OData/API/Dev/WebClient access"
         required: false
         type: string
-        default: "admin"
+        default: ""
       bc_password:
         description: "NavUserPassword password for OData/API/Dev/WebClient access"
         required: false
         type: string
-        default: "admin"
+        default: ""
+      sql_sa_password:
+        description: "SQL Server sa password for the disposable test container"
+        required: false
+        type: string
+        default: ""
       app_dirs:
         description: "Space-separated dirs containing app.json for production apps (compile order)"
         required: false
@@ -222,6 +227,13 @@ jobs:
       BC_TYPE: ${{ inputs.bc_type }}
       BC_USERNAME: ${{ inputs.bc_username }}
       BC_PASSWORD: ${{ inputs.bc_password }}
+      SA_PASSWORD: ${{ inputs.sql_sa_password }}
+      BC_INCLUDE_TEST_TOOLKIT: "true"
+      BC_DEV_SERVICES_ENABLED: "true"
+      BC_MANAGEMENT_SERVICES_ENABLED: "true"
+      BC_MANAGEMENT_API_SERVICES_ENABLED: "true"
+      BC_TEST_AUTOMATION_ENABLED: "true"
+      BC_ALLOW_INSECURE_AUTH_BYPASS: "true"
 
     steps:
       # ─── Phase 1: cheap parallel-friendly checkouts ──────────────────

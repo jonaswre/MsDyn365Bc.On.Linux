@@ -19,7 +19,9 @@ execute tests via the bundled TestRunnerExtension.
    `azure-pipelines.yml` (or any name).
 2. **Edit the `variables:` block** at the top:
    - `BC_VERSION`, `BC_COUNTRY`, `BC_TYPE` — defaults `latest` / `w1` / `onprem`.
-   - `BC_USERNAME`, `BC_PASSWORD` — defaults `admin` / `admin`.
+	   - `BC_USERNAME`, `BC_PASSWORD`, `SA_PASSWORD` — set non-default
+	     credentials before running the pipeline. Use secret variables for
+	     passwords in real pipelines.
    - `BC_RUNTIME_REF` — runtime repo ref to clone for scripts; defaults
      `master`.
    - **From-source**: `APP_DIRS` and `TEST_APP_DIRS` — space-separated paths
@@ -51,11 +53,10 @@ preinstalled — no service connection or self-hosted agent required.
 
 - **Image**: `ghcr.io/jonaswre/msdyn365bc.on.linux/bc-runner:latest` —
   multi-stage Docker image that downloads Microsoft BC artifacts at boot,
-  copies the .NET 8 service tier into place, applies a startup-hook patch
-  set, restores the CRONUS demo DB, and exposes the standard BC service
-  endpoints used by container automation: Management 7045, Client Services
-  7046, SOAP 7047, OData 7048, Dev 7049, API 7052, WebClient 7085, and
-  Management API 7086.
+	  copies the .NET 8 service tier into place, applies a startup-hook patch
+	  set, restores the CRONUS demo DB, and exposes the explicitly enabled BC
+	  service endpoints used by container automation on loopback host ports.
+	  SQL Server stays internal to the Compose network.
 - **`git clone` of the Business Central runtime**: brings in `docker-compose.yml`,
   `run-tests.sh`, the bundled `TestRunnerExtension.app`, and
   `download-artifacts.sh`. We use a plain `git clone` (rather than the

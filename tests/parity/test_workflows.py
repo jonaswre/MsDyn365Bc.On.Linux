@@ -149,6 +149,47 @@ class ParityWorkflowTests(unittest.TestCase):
 
         self.assertNotIn("YOURBC-SERVICEUSER", script)
 
+    def test_compose_requires_explicit_credentials_and_internal_sql(self):
+        compose_text = Path("docker-compose.yml").read_text(encoding="utf-8")
+        compose = yaml.safe_load(compose_text)
+
+        sql = compose["services"]["sql"]
+
+        self.assertNotIn("ports", sql)
+        self.assertIn("1433", sql.get("expose", []))
+        self.assertIn("${SA_PASSWORD:?", compose_text)
+        self.assertIn("${BC_USERNAME:?", compose_text)
+        self.assertIn("${BC_PASSWORD:?", compose_text)
+        self.assertNotIn("Passw0rd123!", compose_text)
+        self.assertNotIn("${BC_PASSWORD:-admin}", compose_text)
+        self.assertNotIn("${BC_USERNAME:-admin}", compose_text)
+
+    def test_compose_binds_host_ports_to_loopback(self):
+        compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
+        ports = compose["services"]["bc"]["ports"]
+
+        self.assertTrue(ports)
+        for port in ports:
+            self.assertTrue(str(port).startswith("127.0.0.1:"), port)
+
+    def test_entrypoint_hardens_dev_test_defaults(self):
+        script = Path("scripts/entrypoint.sh").read_text(encoding="utf-8")
+
+        self.assertIn('BC_INCLUDE_TEST_TOOLKIT="${BC_INCLUDE_TEST_TOOLKIT:-false}"', script)
+        self.assertIn('BC_DEV_SERVICES_ENABLED="${BC_DEV_SERVICES_ENABLED:-false}"', script)
+        self.assertIn('BC_MANAGEMENT_SERVICES_ENABLED="${BC_MANAGEMENT_SERVICES_ENABLED:-false}"', script)
+        self.assertIn('BC_MANAGEMENT_API_SERVICES_ENABLED="${BC_MANAGEMENT_API_SERVICES_ENABLED:-false}"', script)
+        self.assertIn('BC_TEST_AUTOMATION_ENABLED="${BC_TEST_AUTOMATION_ENABLED:-false}"', script)
+        self.assertIn("validate_required_credentials", script)
+        self.assertIn("Refusing default BC credentials", script)
+
+    def test_auth_bypass_requires_explicit_opt_in(self):
+        source = Path("src/StartupHook/StartupHook.cs").read_text(encoding="utf-8")
+
+        self.assertIn("BC_ALLOW_INSECURE_AUTH_BYPASS", source)
+        self.assertIn("IsTruthy", source)
+        self.assertIn("NavUser.TryAuthenticate bypass disabled", source)
+
     def test_linux_contract_loads_keep_app_ids_before_startup(self):
         steps = self.linux_contract_job()["steps"]
         start_index = self.step_names().index("Start Linux BC")

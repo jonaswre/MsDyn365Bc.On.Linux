@@ -7,6 +7,9 @@ patched at runtime so it boots and serves on Linux.
 ```bash
 git clone https://github.com/jonaswre/MsDyn365Bc.On.Linux.git
 cd MsDyn365Bc.On.Linux
+export BC_USERNAME=bcrunner
+export BC_PASSWORD='use-a-strong-password-here'
+export SA_PASSWORD='use-a-strong-sql-password-here'
 docker compose up -d --wait
 ```
 
@@ -23,25 +26,38 @@ tags the same ref locally, so it then takes precedence over the pull — run
 `docker compose build` again after changing `src/` or `scripts/`, or
 `docker compose pull` to drop back to the published image).
 
-When the command returns, BC is running with a CRONUS demo database, dev
-endpoint, SOAP, OData, API, and the test toolkit (Test Runner, Library Assert,
-Variable Storage, Permissions Mock, Any, System Application Test Library,
-Business Foundation Test Libraries, Tests-TestLibraries) all published —
-ready for extension development and testing.
+When the command returns, BC is running with a CRONUS demo database and the
+default local-only service surface: Client Services, SOAP, OData, and API.
+SQL is available only on the Compose network, and host-published BC ports bind
+to `127.0.0.1`.
 
-`docker compose up -d --wait` uses the container healthcheck, which probes the
-published BC network surface: legacy Management on 7045 and Client Services on
-7046, plus SOAP, OData, API, DevServices, Management API, and WebClient over
-HTTP. For a quick interactive smoke check:
+For AL development and test execution, explicitly opt into the dev/test
+surface:
 
 ```bash
-BC_AUTH="${BC_USERNAME:-admin}:${BC_PASSWORD:-admin}"
+export BC_DEV_SERVICES_ENABLED=true
+export BC_TEST_AUTOMATION_ENABLED=true
+export BC_INCLUDE_TEST_TOOLKIT=true
+export BC_ALLOW_INSECURE_AUTH_BYPASS=true
+docker compose up -d --wait
+```
+
+`BC_ALLOW_INSECURE_AUTH_BYPASS=true` is currently required for NavUserPassword
+developer/test logins on Linux because the Microsoft password-hash verification
+path does not work correctly under this runtime. It is off by default.
+
+`docker compose up -d --wait` uses the container healthcheck, which probes the
+enabled BC network surface. For a quick interactive smoke check after opting
+into the auth bypass:
+
+```bash
+BC_AUTH="${BC_USERNAME}:${BC_PASSWORD}"
 curl -sf -u "$BC_AUTH" http://localhost:7048/BC/ODataV4/Company \
   | python3 -c "import sys,json; print('OK:', json.load(sys.stdin)['value'][0]['Name'])"
 # → OK: CRONUS International Ltd.
 ```
 
-To verify the full standard container surface from the host, run:
+To verify the enabled container surface from the host, run:
 
 ```bash
 scripts/verify-network-surface.sh
@@ -110,24 +126,25 @@ without using the VS Code AL extension's F5 build:
 
 ## Endpoints
 
-After `docker compose up`, these are available:
+After `docker compose up`, host-published ports are bound to `127.0.0.1`.
+These services are enabled by default unless noted:
 
 | Endpoint     | URL                                       | Purpose                              |
 |--------------|-------------------------------------------|--------------------------------------|
-| Management   | `http://localhost:7045/BC/Management`     | Legacy NAV management endpoint       |
+| Management   | `http://localhost:7045/BC/Management`     | Legacy NAV management endpoint (`BC_MANAGEMENT_SERVICES_ENABLED=true`) |
 | Client svc   | `http://localhost:7046/BC`                | Client Services compatibility port   |
 | SOAP         | `http://localhost:7047/BC/WS`             | SOAP web services                    |
-| Dev          | `http://localhost:7049/BC/dev`            | Publish extensions, download symbols |
+| Dev          | `http://localhost:7049/BC/dev`            | Publish extensions, download symbols (`BC_DEV_SERVICES_ENABLED=true`) |
 | OData        | `http://localhost:7048/BC/ODataV4`        | Data access                          |
 | API v2.0     | `http://localhost:7052/BC/api/v2.0`       | Business API                         |
-| Mgmt API     | `http://localhost:7086/BC`                | Management API service               |
+| Mgmt API     | `http://localhost:7086/BC`                | Management API service (`BC_MANAGEMENT_API_SERVICES_ENABLED=true`) |
 | Client (WS)  | `ws://localhost:7085/BC`                  | WebSocket client services (TestPage) |
 | Web client   | `http://localhost:8080`                   | Browser UI (opt-in, `BC_WEBCLIENT=1`) |
 
-**Authentication:** `admin` / `admin` (NavUserPassword) by default.
-All BC HTTP endpoints require these Basic credentials, matching the
-standard NavUserPassword container surface. Set `BC_USERNAME` and
-`BC_PASSWORD` to use custom container credentials.
+**Authentication:** `BC_USERNAME`, `BC_PASSWORD`, and `SA_PASSWORD` are
+required. The container refuses the old `admin` / `admin` and `Passw0rd123!`
+defaults. For local development and CI tests that need NavUserPassword login,
+set `BC_ALLOW_INSECURE_AUTH_BYPASS=true` explicitly.
 
 ### Web client (browser UI)
 
@@ -136,8 +153,10 @@ on Kestrel inside the bc container — sign-in, role center, list pages, and
 cards work in a normal browser against the Linux NST:
 
 ```bash
-BC_WEBCLIENT=1 docker compose up -d --wait
-# then open http://localhost:8080  (admin / admin by default)
+BC_WEBCLIENT=1 \
+BC_ALLOW_INSECURE_AUTH_BYPASS=true \
+docker compose up -d --wait
+# then open http://localhost:8080 with BC_USERNAME / BC_PASSWORD
 ```
 
 Works with the macOS overlay too
@@ -181,15 +200,14 @@ printing, and file upload are untested. Details: [docs/WEBCLIENT-POC.md](docs/WE
    ```
 
    When the AL extension prompts for credentials on first publish, use
-   the configured `BC_USERNAME` / `BC_PASSWORD` values, or **`admin`** /
-   **`admin`** when you use the defaults.
+   the configured `BC_USERNAME` / `BC_PASSWORD` values.
 
 3. **Download symbols** — `Ctrl+Shift+P` → **AL: Download Symbols**.
    Or manually:
 
    ```bash
    mkdir -p .alpackages
-   BC_AUTH="${BC_USERNAME:-admin}:${BC_PASSWORD:-admin}"
+   BC_AUTH="${BC_USERNAME}:${BC_PASSWORD}"
    for app in System "System Application" "Base Application" "Application"; do
      curl -sf -u "$BC_AUTH" \
        "http://localhost:7049/BC/dev/packages?publisher=Microsoft&appName=$(echo $app | sed 's/ /%20/g')&versionText=0.0.0.0" \
@@ -223,7 +241,7 @@ AL compile "/project:." "/packagecachepath:.alpackages" "/out:MyExtension.app"
 **Publish via dev endpoint:**
 
 ```bash
-BC_AUTH="${BC_USERNAME:-admin}:${BC_PASSWORD:-admin}"
+BC_AUTH="${BC_USERNAME}:${BC_PASSWORD}"
 curl -u "$BC_AUTH" -X POST \
   -F "file=@MyExtension.app;type=application/octet-stream" \
   "http://localhost:7049/BC/dev/apps?SchemaUpdateMode=forcesync"
@@ -234,11 +252,19 @@ curl -u "$BC_AUTH" -X POST \
 ## Running AL tests
 
 The test framework (Test Runner, Library Assert, Library Variable Storage,
-Permissions Mock, Any) is published automatically on first boot of the BC
-container, so a fresh `docker compose up -d --wait` is enough — no extra
-setup. Set `BC_INCLUDE_TEST_TOOLKIT=false` to start without that test surface;
-startup also clears stock test framework entries so the container does not
-expose a partial toolkit.
+Permissions Mock, Any) is opt-in. Start the container with the dev/test surface
+enabled before publishing and running tests:
+
+```bash
+BC_DEV_SERVICES_ENABLED=true \
+BC_TEST_AUTOMATION_ENABLED=true \
+BC_INCLUDE_TEST_TOOLKIT=true \
+BC_ALLOW_INSECURE_AUTH_BYPASS=true \
+docker compose up -d --wait
+```
+
+When `BC_INCLUDE_TEST_TOOLKIT=false`, startup clears stock test framework
+entries so the container does not expose a partial toolkit.
 
 ```bash
 # Auto-discover test codeunits from the .app's symbols
@@ -333,14 +359,18 @@ For end-to-end CI examples (compile + publish + test on every PR), see
 
 ## Configuration
 
-Defaults are in `.env`. Override any variable on the command line without
-editing files:
+Most runtime settings have safe defaults; credentials are required. Override
+any variable on the command line without editing files:
 
 ```bash
 # Change BC version
+BC_USERNAME=bcrunner BC_PASSWORD='use-a-strong-password' \
+SA_PASSWORD='use-a-strong-sql-password' \
 BC_VERSION=28.0 docker compose up -d
 
 # Change country
+BC_USERNAME=bcrunner BC_PASSWORD='use-a-strong-password' \
+SA_PASSWORD='use-a-strong-sql-password' \
 BC_VERSION=27.5 BC_COUNTRY=de docker compose up -d
 
 # Change ports as a set (if defaults conflict)
@@ -361,22 +391,26 @@ BC_CLIENT_PORT=17085 \
 | `BC_COUNTRY`              | `w1`           | Country/region code                                                                                                            |
 | `BC_TYPE`                 | `onprem`       | `onprem` or `sandbox`                                                                                                          |
 | `ACCEPT_EULA`             | `Y`            | Accept the Microsoft container EULA for SQL/BC startup                                                                         |
-| `BC_USERNAME`             | `admin`        | NavUserPassword username for OData/API/Dev/WebClient access                                                                    |
-| `BC_PASSWORD`             | `admin`        | NavUserPassword password for OData/API/Dev/WebClient access                                                                    |
-| `BC_INCLUDE_TEST_TOOLKIT` | `true`         | Publish the test toolkit and Test Runner API during startup. When `false`, stock test framework entries are cleared as well.    |
+| `BC_USERNAME`             | required       | NavUserPassword username for OData/API/Dev/WebClient access                                                                    |
+| `BC_PASSWORD`             | required       | NavUserPassword password for OData/API/Dev/WebClient access                                                                    |
+| `BC_INCLUDE_TEST_TOOLKIT` | `false`        | Publish the test toolkit and Test Runner API during startup. When `false`, stock test framework entries are cleared as well.    |
+| `BC_DEV_SERVICES_ENABLED` | `false`        | Enable the Dev endpoint for publishing extensions, symbols, and AL test tooling                                                 |
+| `BC_TEST_AUTOMATION_ENABLED` | `false`     | Enable BC test automation and sandbox tenant behavior                                                                          |
+| `BC_MANAGEMENT_SERVICES_ENABLED` | `false` | Enable the legacy NAV management endpoint                                                                                      |
+| `BC_MANAGEMENT_API_SERVICES_ENABLED` | `false` | Enable the Management API endpoint                                                                                         |
+| `BC_ALLOW_INSECURE_AUTH_BYPASS` | `false` | Opt into the Linux NavUserPassword compatibility bypass needed by current dev/test login flows                                  |
 | `BC_MEMORY_LIMIT`         | `8G`           | Docker memory limit for the BC service container                                                                               |
 | `MSSQL_MEMORY_LIMIT_MB`   | `2048`         | SQL Server memory limit in MB                                                                                                  |
 | `BC_DNS`                  | unset          | Optional DNS server for the BC service container                                                                               |
 | `BC_API_REQUEST_LIMIT`    | `50`           | OData/API per-user concurrency limit. Set `0` to leave artifact defaults                                                       |
-| `SA_PASSWORD`             | `Passw0rd123!` | SQL Server SA password                                                                                                         |
-| `SQL_PORT`                | `11433`        | Host port for SQL Server                                                                                                       |
-| `BC_CLIENT_SERVICES_PORT` | `7046`         | Host port published for the standard Client Services compatibility endpoint                                                     |
+| `SA_PASSWORD`             | required       | SQL Server SA password. SQL is not published on a host port by default                                                         |
+| `BC_CLIENT_SERVICES_PORT` | `7046`         | Loopback host port published for the standard Client Services compatibility endpoint                                            |
 | `BC_SOAP_PORT`            | `7047`         | Host port published for SOAP web services                                                                                      |
-| `BC_DEV_PORT`             | `7049`         | Host port published for the Dev endpoint (publish, symbols)                                                                    |
+| `BC_DEV_PORT`             | `7049`         | Loopback host port published for the Dev endpoint when `BC_DEV_SERVICES_ENABLED=true`                                           |
 | `BC_ODATA_PORT`           | `7048`         | Host port published for OData v4                                                                                               |
 | `BC_API_PORT`             | `7052`         | Host port published for API v2.0 and automation API                                                                            |
-| `BC_MGMT_PORT`            | `7045`         | Host port published for the legacy NAV management endpoint                                                                     |
-| `BC_MGMT_API_PORT`        | `7086`         | Host port published for the Management API service                                                                             |
+| `BC_MGMT_PORT`            | `7045`         | Loopback host port published for the legacy NAV management endpoint when enabled                                                |
+| `BC_MGMT_API_PORT`        | `7086`         | Loopback host port published for the Management API service when enabled                                                        |
 | `BC_CLIENT_PORT`          | `7085`         | Host port published for WebClient / client services                                                                            |
 | `BC_LICENSE_HOST_PATH`    | unset          | Optional host path to a `.bclicense` file. Mounted into bc + sql containers and imported instead of the default Cronus license. |
 | `BC_LICENSE_FILE`         | unset          | Path inside the container of the license file to import. Use `/bc/custom-license.bclicense` together with `BC_LICENSE_HOST_PATH`. |
@@ -419,7 +453,7 @@ accessible — no GHCR auth needed.
 | `.github/workflows/bc-test-from-source.yml`  | Reusable GitHub workflow — compiles AL source from your repo              |
 | `.github/workflows/bc-test-prebuilt.yml`     | Reusable GitHub workflow — publishes pre-built `.app` files               |
 
-Cleanest consumer experience (10-line `.github/workflows/bc-test.yml`):
+Cleanest consumer experience (small `.github/workflows/bc-test.yml`):
 
 ```yaml
 name: BC Tests
@@ -429,6 +463,9 @@ jobs:
     uses: jonaswre/MsDyn365Bc.On.Linux/.github/workflows/bc-test-from-source.yml@master
     with:
       bc_version:     "latest"
+      bc_username:    ${{ vars.BC_USERNAME }}
+      bc_password:    ${{ secrets.BC_PASSWORD }}
+      sql_sa_password: ${{ secrets.BC_SQL_SA_PASSWORD }}
       app_dirs:       "app"
       test_app_dirs:  "test"
       codeunit_range: "50000..99999"
@@ -458,12 +495,16 @@ namespace all containers, networks, and volumes.
 
 ```bash
 # Instance 1: BC 27.5 on default ports
+BC_USERNAME=bcrunner BC_PASSWORD='use-a-strong-password' \
+SA_PASSWORD='use-a-strong-sql-password' \
 docker compose -p bc275 up -d --wait
 
 # Instance 2: BC 28.0 on offset ports
 COMPOSE_PROJECT_NAME=bc280 \
+BC_USERNAME=bcrunner2 \
+BC_PASSWORD='use-a-different-strong-password' \
+SA_PASSWORD='use-a-different-strong-sql-password' \
 BC_VERSION=28.0 \
-SQL_PORT=21433 \
 BC_CLIENT_SERVICES_PORT=17046 \
 BC_SOAP_PORT=17047 \
 BC_DEV_PORT=17049 \
@@ -493,8 +534,10 @@ For convenience, you can keep a per-instance `.env` file:
 
 ```bash
 # .env.bc280
+BC_USERNAME=bcrunner2
+BC_PASSWORD=use-a-different-strong-password
+SA_PASSWORD=use-a-different-strong-sql-password
 BC_VERSION=28.0
-SQL_PORT=21433
 BC_CLIENT_SERVICES_PORT=17046
 BC_SOAP_PORT=17047
 BC_DEV_PORT=17049

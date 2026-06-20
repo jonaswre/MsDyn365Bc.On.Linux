@@ -23,8 +23,13 @@ Playwright:
 ## How to run
 
 ```bash
-BC_WEBCLIENT=1 docker compose up -d --wait
-# then browse to http://localhost:8080  (BCRUNNER / Admin123!)
+BC_USERNAME=bcrunner \
+BC_PASSWORD='use-a-strong-password' \
+SA_PASSWORD='use-a-strong-sql-password' \
+BC_ALLOW_INSECURE_AUTH_BYPASS=true \
+BC_WEBCLIENT=1 \
+docker compose up -d --wait
+# then browse to http://localhost:8080 with BC_USERNAME / BC_PASSWORD
 ```
 
 Or start it manually inside a running container:

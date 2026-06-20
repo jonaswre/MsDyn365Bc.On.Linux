@@ -44,8 +44,15 @@ env:
   BC_VERSION: "latest"
   BC_COUNTRY: "w1"
   BC_TYPE: "onprem"
-  BC_USERNAME: "admin"
-  BC_PASSWORD: "admin"
+  BC_USERNAME: "bcrunner"
+  BC_PASSWORD: "replace-with-a-strong-password"
+  SA_PASSWORD: "replace-with-a-strong-sql-password"
+  BC_INCLUDE_TEST_TOOLKIT: "true"
+  BC_DEV_SERVICES_ENABLED: "true"
+  BC_MANAGEMENT_SERVICES_ENABLED: "true"
+  BC_MANAGEMENT_API_SERVICES_ENABLED: "true"
+  BC_TEST_AUTOMATION_ENABLED: "true"
+  BC_ALLOW_INSECURE_AUTH_BYPASS: "true"
 
   # Space-separated paths to your production AL app source dirs (each
   # must contain an app.json). Leave empty ("") if your repo only has

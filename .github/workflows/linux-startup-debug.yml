@@ -54,9 +54,15 @@ jobs:
       BC_VERSION: ${{ inputs.version }}
       BC_COUNTRY: w1
       BC_TYPE: onprem
-      BC_USERNAME: admin
-      BC_PASSWORD: admin
+      BC_USERNAME: bcrunner
+      BC_PASSWORD: BcRunnerTests!23456
+      SA_PASSWORD: BcRunnerSql!23456
       BC_INCLUDE_TEST_TOOLKIT: ${{ inputs.include_test_toolkit }}
+      BC_DEV_SERVICES_ENABLED: 'true'
+      BC_MANAGEMENT_SERVICES_ENABLED: 'true'
+      BC_MANAGEMENT_API_SERVICES_ENABLED: 'true'
+      BC_TEST_AUTOMATION_ENABLED: ${{ inputs.include_test_toolkit }}
+      BC_ALLOW_INSECURE_AUTH_BYPASS: 'true'
       BC_CLEAR_ALL_APPS: ${{ inputs.clear_all_apps }}
       BC_KEEP_APP_IDS: ${{ inputs.keep_app_ids }}
       MSSQL_MEMORY_LIMIT_MB: 1024

@@ -6,7 +6,7 @@ repo. All flavours pull the public
 and use the bundled scripts to boot BC, publish your apps, and execute
 tests via the bundled TestRunnerExtension.
 
-## ✨ Recommended: reusable workflow (10-line consumer file)
+## ✨ Recommended: reusable workflow (small consumer file)
 
 This repo ships two **reusable workflows** in its own `.github/workflows/`
 that you can call from your repo. The consumer file is tiny:
@@ -20,6 +20,9 @@ jobs:
     uses: jonaswre/MsDyn365Bc.On.Linux/.github/workflows/bc-test-from-source.yml@master
     with:
       bc_version:     "latest"
+      bc_username:    ${{ vars.BC_USERNAME }}
+      bc_password:    ${{ secrets.BC_PASSWORD }}
+      sql_sa_password: ${{ secrets.BC_SQL_SA_PASSWORD }}
       app_dirs:       "app"
       test_app_dirs:  "test"
       codeunit_range: "50000..99999"
@@ -46,8 +49,9 @@ reproducible CI runs swap it for a release tag once one exists
 | `bc_version` | no | `latest` | BC platform version. Use `latest` for the newest artifact, or pin a major/minor/full version such as `28.1`. |
 | `bc_country` | no | `w1` | BC country code |
 | `bc_type` | no | `onprem` | `onprem` or `sandbox` |
-| `bc_username` | no | `admin` | NavUserPassword username for OData/API/Dev/WebClient access |
-| `bc_password` | no | `admin` | NavUserPassword password for OData/API/Dev/WebClient access |
+| `bc_username` | **yes** | `""` | NavUserPassword username for OData/API/Dev/WebClient access |
+| `bc_password` | **yes** | `""` | NavUserPassword password for OData/API/Dev/WebClient access |
+| `sql_sa_password` | **yes** | `""` | SQL Server `sa` password for the disposable test container |
 | `app_dirs` | no | `""` | Space-separated dirs containing `app.json` for production apps |
 | `test_app_dirs` | **yes** | — | Space-separated dirs containing `app.json` for test apps |
 | `codeunit_range` | **yes** | — | IDs of your **test** codeunits to execute. Production app codeunits are published but not run. Accepts `"50000..99999"` (single AL range), `"50000..50100\|130450..130459"` (multiple ranges, pipe-separated), `"50000,50001,50002"` (explicit ids), or any mix. |
@@ -181,6 +185,9 @@ jobs:
     uses: jonaswre/MsDyn365Bc.On.Linux/.github/workflows/bc-test-from-source.yml@master
     with:
       bc_version:     "latest"
+      bc_username:    ${{ vars.BC_USERNAME }}
+      bc_password:    ${{ secrets.BC_PASSWORD }}
+      sql_sa_password: ${{ secrets.BC_SQL_SA_PASSWORD }}
       app_dirs:       "app"
       test_app_dirs:  "test"
       codeunit_range: "50000..99999"

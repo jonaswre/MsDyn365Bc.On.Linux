@@ -43,8 +43,15 @@ variables:
   BC_VERSION: 'latest'
   BC_COUNTRY: 'w1'
   BC_TYPE: 'onprem'
-  BC_USERNAME: 'admin'
-  BC_PASSWORD: 'admin'
+  BC_USERNAME: 'bcrunner'
+  BC_PASSWORD: 'replace-with-a-strong-password'
+  SA_PASSWORD: 'replace-with-a-strong-sql-password'
+  BC_INCLUDE_TEST_TOOLKIT: 'true'
+  BC_DEV_SERVICES_ENABLED: 'true'
+  BC_MANAGEMENT_SERVICES_ENABLED: 'true'
+  BC_MANAGEMENT_API_SERVICES_ENABLED: 'true'
+  BC_TEST_AUTOMATION_ENABLED: 'true'
+  BC_ALLOW_INSECURE_AUTH_BYPASS: 'true'
 
   # Space-separated dirs containing app.json for your production AL apps.
   # Leave empty ('') if your repo only has test apps.
@@ -199,6 +206,15 @@ steps:
       export BC_VERSION="$(BC_VERSION)"
       export BC_COUNTRY="$(BC_COUNTRY)"
       export BC_TYPE="$(BC_TYPE)"
+      export BC_USERNAME="$(BC_USERNAME)"
+      export BC_PASSWORD="$(BC_PASSWORD)"
+      export SA_PASSWORD="$(SA_PASSWORD)"
+      export BC_INCLUDE_TEST_TOOLKIT="$(BC_INCLUDE_TEST_TOOLKIT)"
+      export BC_DEV_SERVICES_ENABLED="$(BC_DEV_SERVICES_ENABLED)"
+      export BC_MANAGEMENT_SERVICES_ENABLED="$(BC_MANAGEMENT_SERVICES_ENABLED)"
+      export BC_MANAGEMENT_API_SERVICES_ENABLED="$(BC_MANAGEMENT_API_SERVICES_ENABLED)"
+      export BC_TEST_AUTOMATION_ENABLED="$(BC_TEST_AUTOMATION_ENABLED)"
+      export BC_ALLOW_INSECURE_AUTH_BYPASS="$(BC_ALLOW_INSECURE_AUTH_BYPASS)"
       export BC_RUNNER_IMAGE="$(BC_RUNNER_IMAGE)"
       export BC_CLEAR_ALL_APPS="$(BC_CLEAR_ALL_APPS)"
       export BC_KEEP_APP_IDS="$(BC_KEEP_APP_IDS)"

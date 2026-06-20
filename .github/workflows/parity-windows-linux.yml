@@ -191,10 +191,16 @@ jobs:
       BC_VERSION: ${{ matrix.bc_version }}
       BC_COUNTRY: w1
       BC_TYPE: onprem
-      BC_USERNAME: admin
-      BC_PASSWORD: admin
+      BC_USERNAME: bcrunner
+      BC_PASSWORD: BcRunnerTests!23456
+      SA_PASSWORD: BcRunnerSql!23456
       BC_CLEAR_ALL_APPS: 'false'
       BC_INCLUDE_TEST_TOOLKIT: 'false'
+      BC_DEV_SERVICES_ENABLED: 'true'
+      BC_MANAGEMENT_SERVICES_ENABLED: 'true'
+      BC_MANAGEMENT_API_SERVICES_ENABLED: 'true'
+      BC_TEST_AUTOMATION_ENABLED: 'true'
+      BC_ALLOW_INSECURE_AUTH_BYPASS: 'true'
       BC_MEMORY_LIMIT: 12G
       MSSQL_MEMORY_LIMIT_MB: 1024
     steps:

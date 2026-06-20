@@ -16,6 +16,21 @@ management_port="${BC_MGMT_PORT:-7045}"
 management_api_port="${BC_MGMT_API_PORT:-7086}"
 webclient_port="${BC_CLIENT_PORT:-7085}"
 
+is_truthy() {
+    case "$(printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+        true|1|yes|y|on) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+enabled() {
+    local name="$1"
+    local default="$2"
+    local value
+    value="${!name:-$default}"
+    is_truthy "$value"
+}
+
 usage() {
     cat <<'EOF'
 Usage: scripts/verify-network-surface.sh
@@ -33,6 +48,8 @@ Environment variables:
   BC_MGMT_PORT             Management host port (default: 7045)
   BC_MGMT_API_PORT         Management API host port (default: 7086)
   BC_CLIENT_PORT           WebClient host port (default: 7085)
+  BC_*_SERVICES_ENABLED    Probe only enabled surfaces. Dev and management
+                           surfaces default to false.
 EOF
 }
 
@@ -113,23 +130,36 @@ require_websocket_upgrade() {
     return 1
 }
 
-require_tcp "Management" "$management_port"
-require_tcp "Client Services" "$client_services_port"
-require_tcp "SOAP" "$soap_port"
-require_tcp "OData" "$odata_port"
-require_tcp "DevServices" "$dev_port"
-require_tcp "API" "$api_port"
-require_tcp "Management API" "$management_api_port"
-require_tcp "WebClient" "$webclient_port"
-
-require_routed "Management" "$(url "$management_port" "/BC/Management")"
-require_success "Client Services" "$(url "$client_services_port" "/BC/client/SignIn")"
-require_websocket_upgrade "Client Services WS" "$(url "$client_services_port" "/BC/client/csh")"
-require_success "OData" "$(url "$odata_port" "/BC/ODataV4/Company?tenant=${tenant}")"
-require_success "API" "$(url "$api_port" "/BC/api/v2.0/companies?tenant=${tenant}")"
-require_success "DevServices" "$(url "$dev_port" "/BC/dev/metadata?tenant=${tenant}")"
-require_routed "SOAP" "$(url "$soap_port" "/BC/WS/Services")"
-require_routed "Management API" "$(url "$management_api_port" "/BC/managementApi/v1.0/companies")"
-require_routed "WebClient" "$(url "$webclient_port" "/BC/client/SignIn")"
+if enabled BC_MANAGEMENT_SERVICES_ENABLED false; then
+    require_tcp "Management" "$management_port"
+    require_routed "Management" "$(url "$management_port" "/BC/Management")"
+fi
+if enabled BC_CLIENT_SERVICES_ENABLED true; then
+    require_tcp "Client Services" "$client_services_port"
+    require_tcp "WebClient" "$webclient_port"
+    require_success "Client Services" "$(url "$client_services_port" "/BC/client/SignIn")"
+    require_websocket_upgrade "Client Services WS" "$(url "$client_services_port" "/BC/client/csh")"
+    require_routed "WebClient" "$(url "$webclient_port" "/BC/client/SignIn")"
+fi
+if enabled BC_SOAP_SERVICES_ENABLED true; then
+    require_tcp "SOAP" "$soap_port"
+    require_routed "SOAP" "$(url "$soap_port" "/BC/WS/Services")"
+fi
+if enabled BC_ODATA_SERVICES_ENABLED true; then
+    require_tcp "OData" "$odata_port"
+    require_success "OData" "$(url "$odata_port" "/BC/ODataV4/Company?tenant=${tenant}")"
+fi
+if enabled BC_DEV_SERVICES_ENABLED false; then
+    require_tcp "DevServices" "$dev_port"
+    require_success "DevServices" "$(url "$dev_port" "/BC/dev/metadata?tenant=${tenant}")"
+fi
+if enabled BC_API_SERVICES_ENABLED true; then
+    require_tcp "API" "$api_port"
+    require_success "API" "$(url "$api_port" "/BC/api/v2.0/companies?tenant=${tenant}")"
+fi
+if enabled BC_MANAGEMENT_API_SERVICES_ENABLED false; then
+    require_tcp "Management API" "$management_api_port"
+    require_routed "Management API" "$(url "$management_api_port" "/BC/managementApi/v1.0/companies")"
+fi
 
 echo "Business Central network surface is available at http://${host}:${client_services_port}/BC"

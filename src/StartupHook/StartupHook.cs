@@ -167,7 +167,7 @@ internal class StartupHook
                 }
                 catch { /* never let the logger throw */ }
             };
-            Console.WriteLine("[StartupHook] BC_DEBUG_FIRSTCHANCE=1: first-chance exception logging enabled");
+            Log("[StartupHook] BC_DEBUG_FIRSTCHANCE=1: first-chance exception logging enabled");
         }
 
         // Patch #13 (early): Prevent Watson crash on unobserved task exceptions.
@@ -296,10 +296,19 @@ internal class StartupHook
             PatchReportingServiceClient(args.LoadedAssembly);
         }
 
-        // Patch #16b: NavUser.TryAuthenticate bypass (password hash doesn't verify on Linux)
+        // Patch #16b: NavUser.TryAuthenticate bypass (password hash doesn't verify on Linux).
+        // This weakens authentication and is disabled unless the caller explicitly
+        // opts into the insecure compatibility path for dev/test containers.
         if (name == "Microsoft.Dynamics.Nav.Ncl")
         {
-            PatchNavUserTryAuthenticate(args.LoadedAssembly);
+            if (IsTruthy(Environment.GetEnvironmentVariable("BC_ALLOW_INSECURE_AUTH_BYPASS")))
+            {
+                PatchNavUserTryAuthenticate(args.LoadedAssembly);
+            }
+            else
+            {
+                Log("[StartupHook] NavUser.TryAuthenticate bypass disabled (set BC_ALLOW_INSECURE_AUTH_BYPASS=true to enable)");
+            }
         }
 
         // Patch #22: AzureADGraphQuery constructor bypass.
@@ -1200,7 +1209,7 @@ internal class StartupHook
                 BindingFlags.NonPublic | BindingFlags.Static, null, new[] { typeof(string) }, null);
             if (method == null)
             {
-                Console.Error.WriteLine("[StartupHook] Patch #24: NSServiceBase.FindClientTimeZone not found");
+                Log("[StartupHook] Patch #24: NSServiceBase.FindClientTimeZone not found");
                 return;
             }
             _navTimeZoneExceptionType = navService.GetType("Microsoft.Dynamics.Nav.Types.Exceptions.NavTimeZoneException")
@@ -1211,7 +1220,7 @@ internal class StartupHook
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[StartupHook] Patch #24 failed: {ex.Message}");
+            Log($"[StartupHook] Patch #24 failed: {ex.Message}");
         }
     }
 
@@ -1280,7 +1289,7 @@ internal class StartupHook
         catch
         {
             var safe = ZoneForOffset(tz.GetUtcOffset(DateTime.UtcNow));
-            Console.Error.WriteLine($"[StartupHook] Patch #24: time zone '{tz.Id}' does not survive .NET serialization on Linux — substituting '{safe.Id}'");
+            Log($"[StartupHook] Patch #24: time zone '{tz.Id}' does not survive .NET serialization on Linux — substituting '{safe.Id}'");
             return safe;
         }
     }
@@ -1999,7 +2008,7 @@ internal class StartupHook
             }
             else
             {
-                Console.WriteLine("[StartupHook] Patch #24: UserSettings.set_TimeZoneInfo or serializedTimeZoneInfo field not found");
+                Log("[StartupHook] Patch #24: UserSettings.set_TimeZoneInfo or serializedTimeZoneInfo field not found");
             }
 
             _patchedTypes = true;
@@ -2024,7 +2033,7 @@ internal class StartupHook
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[StartupHook] Patch #24 set_TimeZoneInfo failed ({ex.GetType().Name}: {ex.Message}) — storing UTC");
+            Log($"[StartupHook] Patch #24 set_TimeZoneInfo failed ({ex.GetType().Name}: {ex.Message}) — storing UTC");
             try { _userSettingsSerializedTzField!.SetValue(self, TimeZoneInfo.Utc.ToSerializedString()); } catch { }
         }
     }
@@ -2743,7 +2752,7 @@ internal class StartupHook
             var type = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.Debugger.BaseDebugRuntime");
             if (type == null)
             {
-                Console.WriteLine("[StartupHook] Patch #25: BaseDebugRuntime type not found — skipping");
+                Log("[StartupHook] Patch #25: BaseDebugRuntime type not found — skipping");
                 return;
             }
 
@@ -2751,7 +2760,7 @@ internal class StartupHook
                 BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)?.GetGetMethod(nonPublic: true);
             if (getter == null)
             {
-                Console.WriteLine("[StartupHook] Patch #25: IsDebuggedSessionClosedOrDisposed getter not found — skipping");
+                Log("[StartupHook] Patch #25: IsDebuggedSessionClosedOrDisposed getter not found — skipping");
                 return;
             }
 
@@ -2760,11 +2769,11 @@ internal class StartupHook
                 nameof(Replacement_IsDebuggedSessionClosedOrDisposed),
                 BindingFlags.Static | BindingFlags.NonPublic)!;
             ApplyJmpHook(getter, replacement, "BaseDebugRuntime.IsDebuggedSessionClosedOrDisposed (Patch #25)");
-            Console.WriteLine("[StartupHook] Patch #25: attach-debug null-session NRE guarded");
+            Log("[StartupHook] Patch #25: attach-debug null-session NRE guarded");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[StartupHook] Patch #25 failed: {ex.GetType().Name}: {ex.Message}");
+            Log($"[StartupHook] Patch #25 failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
