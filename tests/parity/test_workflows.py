@@ -179,7 +179,9 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn('dotnet "$ALTOOL_DLL" workspace compile', scripts)
         self.assertIn('dotnet "$ALTOOL_DLL" publishapp', scripts)
         self.assertIn('dotnet "$ALTOOL_DLL" runtests 99800', scripts)
-        self.assertIn("Test run completed: 2 passed, 0 failed, 0 skipped.", scripts)
+        self.assertIn("Test run completed: 3 passed, 0 failed, 0 skipped.", scripts)
+        self.assertIn("PASS AdditionWorks", scripts)
+        self.assertIn("PASS MultiplicationWorks", scripts)
         self.assertNotIn('BC_VERSION: "27.', str(workflow["jobs"]))
 
     def test_primary_workflows_cancel_stale_runs(self):
