@@ -164,6 +164,53 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertNotIn("${BC_PASSWORD:-admin}", compose_text)
         self.assertNotIn("${BC_USERNAME:-admin}", compose_text)
 
+    def test_compose_uses_persistent_sql_data_volume(self):
+        compose_text = Path("docker-compose.yml").read_text(encoding="utf-8")
+        compose = yaml.safe_load(compose_text)
+
+        sql = compose["services"]["sql"]
+        bc = compose["services"]["bc"]
+
+        self.assertNotIn("tmpfs", sql)
+        self.assertIn("bc-sql-data:/var/opt/mssql", sql["volumes"])
+        self.assertIn("bc-sql-data", compose["volumes"])
+        self.assertEqual(
+            "${BC_ENABLE_CI_SQL_TUNING:-false}",
+            bc["environment"]["BC_ENABLE_CI_SQL_TUNING"],
+        )
+        self.assertIn("bc-sql-data", compose_text)
+
+    def test_entrypoint_gates_ci_sql_tuning_and_avoids_sysadmin(self):
+        script = Path("scripts/entrypoint.sh").read_text(encoding="utf-8")
+
+        self.assertIn("BC_ENABLE_CI_SQL_TUNING", script)
+        self.assertIn('is_truthy "${BC_ENABLE_CI_SQL_TUNING:-false}"', script)
+        self.assertIn("ALTER ROLE [db_owner] ADD MEMBER [$BC_DB_USER_IDENT]", script)
+        self.assertIn('SQLCMD_SA_DB="sqlcmd -S $SQL_SERVER -U sa -P $SA_PASSWORD -d CRONUS -C -No"', script)
+        self.assertIn('$SQLCMD_SA_DB -Q "', script)
+        self.assertNotIn("ALTER SERVER ROLE sysadmin ADD MEMBER", script)
+        self.assertIn("SQL CI tuning disabled", script)
+
+    def test_sql_persistence_check_recreates_stack_without_removing_volumes(self):
+        script_path = Path("scripts/verify-sql-persistence.sh")
+
+        self.assertTrue(script_path.exists())
+        script = script_path.read_text(encoding="utf-8")
+
+        self.assertIn("docker compose down", script)
+        self.assertNotIn("docker compose down -v", script)
+        self.assertIn("bc_sql_persistence_marker", script)
+        self.assertIn("docker compose up -d", script)
+        self.assertIn("scripts/wait-for-bc-healthy.sh", script)
+        self.assertIn("Persistence marker survived container recreation", script)
+
+    def test_container_download_job_verifies_sql_persistence(self):
+        workflow = yaml.safe_load(Path(".github/workflows/test-versions.yml").read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["test-container-download"]["steps"]
+        scripts = "\n".join(step.get("run", "") for step in steps)
+
+        self.assertIn("./scripts/verify-sql-persistence.sh", scripts)
+
     def test_compose_binds_host_ports_to_loopback(self):
         compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
         ports = compose["services"]["bc"]["ports"]

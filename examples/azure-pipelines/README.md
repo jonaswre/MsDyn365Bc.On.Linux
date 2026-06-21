@@ -22,6 +22,9 @@ execute tests via the bundled TestRunnerExtension.
 	   - `BC_USERNAME`, `BC_PASSWORD`, `SA_PASSWORD` — set non-default
 	     credentials before running the pipeline. Use secret variables for
 	     passwords in real pipelines.
+   - `BC_ENABLE_CI_SQL_TUNING` — keep `true` for these disposable CI
+     containers. The runtime default is `false` so durable Compose stacks keep
+     SQL Server safety defaults.
    - `BC_RUNTIME_REF` — runtime repo ref to clone for scripts; defaults
      `master`.
    - **From-source**: `APP_DIRS` and `TEST_APP_DIRS` — space-separated paths
@@ -56,7 +59,9 @@ preinstalled — no service connection or self-hosted agent required.
 	  copies the .NET 8 service tier into place, applies a startup-hook patch
 	  set, restores the CRONUS demo DB, and exposes the explicitly enabled BC
 	  service endpoints used by container automation on loopback host ports.
-	  SQL Server stays internal to the Compose network.
+	  SQL Server stays internal to the Compose network. These templates
+	  explicitly opt into disposable CI SQL tuning; the runtime default uses a
+	  persistent SQL data volume and preserves database safety settings.
 - **`git clone` of the Business Central runtime**: brings in `docker-compose.yml`,
   `run-tests.sh`, the bundled `TestRunnerExtension.app`, and
   `download-artifacts.sh`. We use a plain `git clone` (rather than the

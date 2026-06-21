@@ -29,7 +29,8 @@ tags the same ref locally, so it then takes precedence over the pull — run
 When the command returns, BC is running with a CRONUS demo database and the
 default local-only service surface: Client Services, SOAP, OData, and API.
 SQL is available only on the Compose network, and host-published BC ports bind
-to `127.0.0.1`.
+to `127.0.0.1`. SQL data is stored in the `bc-sql-data` Docker volume by
+default, so it survives `docker compose down` and container recreation.
 
 For AL development and test execution, explicitly opt into the dev/test
 surface:
@@ -394,6 +395,7 @@ BC_CLIENT_PORT=17085 \
 | `BC_USERNAME`             | required       | NavUserPassword username for OData/API/Dev/WebClient access                                                                    |
 | `BC_PASSWORD`             | required       | NavUserPassword password for OData/API/Dev/WebClient access                                                                    |
 | `BC_INCLUDE_TEST_TOOLKIT` | `false`        | Publish the test toolkit and Test Runner API during startup. When `false`, stock test framework entries are cleared as well.    |
+| `BC_ENABLE_CI_SQL_TUNING` | `false`        | Opt into disposable CI/test SQL speed tuning that disables safety features. Leave `false` for durable stacks.                   |
 | `BC_DEV_SERVICES_ENABLED` | `false`        | Enable the Dev endpoint for publishing extensions, symbols, and AL test tooling                                                 |
 | `BC_TEST_AUTOMATION_ENABLED` | `false`     | Enable BC test automation and sandbox tenant behavior                                                                          |
 | `BC_MANAGEMENT_SERVICES_ENABLED` | `false` | Enable the legacy NAV management endpoint                                                                                      |
@@ -430,11 +432,32 @@ tier comes up with the right license on first boot. The reusable CI
 workflows (`bc-test-from-source.yml` / `bc-test-prebuilt.yml`) accept
 the same license via a `bc_license` secret (base64-encoded).
 
+**SQL durability:** `docker compose down` stops and removes containers but
+keeps named volumes, including `bc-sql-data`. The next `docker compose up`
+reuses the existing CRONUS database instead of restoring the artifact BAK.
+
 **Reset state:** `docker compose down -v` removes the containers *and* the
-named volumes (`bc-artifacts`, `bc-service`), forcing a fresh artifact
-download and BAK restore on the next `up`. Use this when you've changed
-something the entrypoint guards on existing files (`/bc/service`,
-patched DLLs).
+named volumes (`bc-artifacts`, `bc-service`, `bc-sql-data`), forcing a fresh
+artifact download and BAK restore on the next `up`. Use this when you want a
+clean database or when you've changed something the entrypoint guards on
+existing files (`/bc/service`, patched DLLs).
+
+**Backup/restore expectation:** treat `bc-sql-data` like the source of truth
+for the SQL instance. For production-like use, take SQL Server backups before
+destructive resets or host migrations:
+
+```bash
+docker compose exec -T sql /opt/mssql-tools18/bin/sqlcmd \
+  -S localhost -U sa -P "$SA_PASSWORD" -C -No \
+  -Q "BACKUP DATABASE [CRONUS] TO DISK = N'/var/opt/mssql/data/CRONUS.bak' WITH INIT, COMPRESSION;"
+docker cp "$(docker compose ps -q sql):/var/opt/mssql/data/CRONUS.bak" ./CRONUS.bak
+```
+
+To verify the default volume preserves data across container recreation:
+
+```bash
+./scripts/verify-sql-persistence.sh
+```
 
 ---
 

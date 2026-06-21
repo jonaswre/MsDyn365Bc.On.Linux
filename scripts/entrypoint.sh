@@ -19,6 +19,10 @@ sql_escape() {
     printf "%s" "$1" | sed "s/'/''/g"
 }
 
+sql_identifier_escape() {
+    printf "%s" "$1" | sed "s/]/]]/g"
+}
+
 is_truthy() {
     case "$(printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]')" in
         true|1|yes|y|on) return 0 ;;
@@ -174,6 +178,9 @@ ACCEPT_EULA="${ACCEPT_EULA:-Y}"
 SA_PASSWORD="${SA_PASSWORD:-}"
 BC_DB_PASSWORD="${BC_DB_PASSWORD:-Test1234}"
 BC_DB_USER="${BC_DB_USER:-bctest}"
+BC_DB_USER_SQL=$(sql_escape "$BC_DB_USER")
+BC_DB_USER_IDENT=$(sql_identifier_escape "$BC_DB_USER")
+BC_DB_PASSWORD_SQL=$(sql_escape "$BC_DB_PASSWORD")
 BC_USERNAME="${BC_USERNAME:-}"
 BC_PASSWORD="${BC_PASSWORD:-}"
 validate_required_credentials
@@ -191,6 +198,7 @@ BC_DEV_SERVICES_ENABLED="${BC_DEV_SERVICES_ENABLED:-false}"
 BC_MANAGEMENT_SERVICES_ENABLED="${BC_MANAGEMENT_SERVICES_ENABLED:-false}"
 BC_MANAGEMENT_API_SERVICES_ENABLED="${BC_MANAGEMENT_API_SERVICES_ENABLED:-false}"
 BC_TEST_AUTOMATION_ENABLED="${BC_TEST_AUTOMATION_ENABLED:-false}"
+BC_ENABLE_CI_SQL_TUNING="${BC_ENABLE_CI_SQL_TUNING:-false}"
 BC_CLIENT_SERVICES_ENABLED_BOOL=$(normalize_bool "$BC_CLIENT_SERVICES_ENABLED")
 BC_SOAP_SERVICES_ENABLED_BOOL=$(normalize_bool "$BC_SOAP_SERVICES_ENABLED")
 BC_ODATA_SERVICES_ENABLED_BOOL=$(normalize_bool "$BC_ODATA_SERVICES_ENABLED")
@@ -567,11 +575,10 @@ SQLCMD="sqlcmd -S $SQL_SERVER -U sa -P $SA_PASSWORD -C -No"
 
 # Create login
 $SQLCMD -Q "
-IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = '$BC_DB_USER')
-    CREATE LOGIN [$BC_DB_USER] WITH PASSWORD = '$BC_DB_PASSWORD', CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;
+IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = '$BC_DB_USER_SQL')
+    CREATE LOGIN [$BC_DB_USER_IDENT] WITH PASSWORD = '$BC_DB_PASSWORD_SQL', CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;
 ELSE
-    ALTER LOGIN [$BC_DB_USER] WITH PASSWORD = '$BC_DB_PASSWORD', CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;
-ALTER SERVER ROLE sysadmin ADD MEMBER [$BC_DB_USER];
+    ALTER LOGIN [$BC_DB_USER_IDENT] WITH PASSWORD = '$BC_DB_PASSWORD_SQL', CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;
 "
 
 # Restore database if needed
@@ -600,7 +607,19 @@ else
     log_step "CRONUS already exists."
 fi
 
+$SQLCMD -Q "
+USE [CRONUS];
+IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = '$BC_DB_USER_SQL')
+    CREATE USER [$BC_DB_USER_IDENT] FOR LOGIN [$BC_DB_USER_IDENT];
+ELSE
+    ALTER USER [$BC_DB_USER_IDENT] WITH LOGIN = [$BC_DB_USER_IDENT];
+IF ISNULL(IS_ROLEMEMBER(N'db_owner', N'$BC_DB_USER_SQL'), 0) <> 1
+    ALTER ROLE [db_owner] ADD MEMBER [$BC_DB_USER_IDENT];
+" 2>/dev/null
+log_step "BC database login scoped to CRONUS db_owner."
+
 SQLCMD_DB="sqlcmd -S $SQL_SERVER -U $BC_DB_USER -P $BC_DB_PASSWORD -d CRONUS -C -No"
+SQLCMD_SA_DB="sqlcmd -S $SQL_SERVER -U sa -P $SA_PASSWORD -d CRONUS -C -No"
 
 # Encryption key
 $SQLCMD_DB -Q "
@@ -642,9 +661,10 @@ if [ -z "$LICENSE_TO_IMPORT" ] && [ -n "$LICENSE_FILE" ] && [ -f "$ARTIFACTS/app
     LICENSE_TO_IMPORT="$ARTIFACTS/app/$LICENSE_FILE"
 fi
 if [ -n "$LICENSE_TO_IMPORT" ]; then
-    $SQLCMD_DB -Q "
+    LICENSE_TO_IMPORT_SQL=$(sql_escape "$LICENSE_TO_IMPORT")
+    $SQLCMD_SA_DB -Q "
     UPDATE [\$ndo\$dbproperty]
-    SET [license] = (SELECT BulkColumn FROM OPENROWSET(BULK '$LICENSE_TO_IMPORT', SINGLE_BLOB) AS f);
+    SET [license] = (SELECT BulkColumn FROM OPENROWSET(BULK '$LICENSE_TO_IMPORT_SQL', SINGLE_BLOB) AS f);
     " 2>/dev/null
     log_step "License imported: $(basename "$LICENSE_TO_IMPORT")"
 fi
@@ -665,9 +685,10 @@ $SQLCMD_DB -Q "UPDATE [\$ndo\$tenantproperty] SET tenanttype = $TENANT_TYPE_SQL;
 # data-side half so the shipped demo data is clean to begin with.
 $SQLCMD_DB -Q "UPDATE [User Personalization] SET [Time Zone] = N'UTC' WHERE [Time Zone] <> N'UTC';" 2>/dev/null
 
-# SQL performance tuning for CI/CD — disable safety overhead not needed for test runs
-# ALTER DATABASE must run from master context, not from within the target database
-$SQLCMD -Q "
+if is_truthy "${BC_ENABLE_CI_SQL_TUNING:-false}"; then
+    # SQL performance tuning for disposable CI/test stacks only.
+    # ALTER DATABASE must run from master context, not from within the target database.
+    $SQLCMD -Q "
 ALTER DATABASE CRONUS SET QUERY_STORE = OFF;
 ALTER DATABASE CRONUS SET AUTO_UPDATE_STATISTICS OFF;
 ALTER DATABASE CRONUS SET AUTO_UPDATE_STATISTICS_ASYNC OFF;
@@ -675,8 +696,8 @@ ALTER DATABASE CRONUS SET AUTO_CREATE_STATISTICS OFF;
 ALTER DATABASE CRONUS SET PAGE_VERIFY NONE;
 ALTER DATABASE CRONUS SET DELAYED_DURABILITY = FORCED;
 " 2>/dev/null
-# Disable change tracking (must disable on tables first, from CRONUS context)
-$SQLCMD_DB -Q "
+    # Disable change tracking (must disable on tables first, from CRONUS context).
+    $SQLCMD_DB -Q "
 DECLARE @sql NVARCHAR(MAX) = '';
 SELECT @sql = @sql + 'ALTER TABLE [' + s.name + '].[' + t.name + '] DISABLE CHANGE_TRACKING;'
 FROM sys.change_tracking_tables ct
@@ -684,8 +705,11 @@ JOIN sys.tables t ON ct.object_id = t.object_id
 JOIN sys.schemas s ON t.schema_id = s.schema_id;
 IF LEN(@sql) > 0 EXEC sp_executesql @sql;
 " 2>/dev/null
-$SQLCMD -Q "ALTER DATABASE CRONUS SET CHANGE_TRACKING = OFF;" 2>/dev/null
-log_step "SQL tuned for CI/CD (query store, stats, page verify, change tracking OFF)"
+    $SQLCMD -Q "ALTER DATABASE CRONUS SET CHANGE_TRACKING = OFF;" 2>/dev/null
+    log_step "SQL tuned for disposable CI/test stack (query store, stats, page verify, change tracking OFF)"
+else
+    log_step "SQL CI tuning disabled; preserving database safety defaults"
+fi
 
 # Clear pre-installed apps before BC starts.
 # BC_CLEAR_ALL_APPS=true:      clear ALL apps, republish ALL dynamically after NST starts (~300s)

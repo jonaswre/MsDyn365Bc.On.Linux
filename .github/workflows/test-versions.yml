@@ -199,6 +199,7 @@ jobs:
         BC_USERNAME: bcrunner
         BC_PASSWORD: BcRunnerTests!23456
         SA_PASSWORD: BcRunnerSql!23456
+        BC_ENABLE_CI_SQL_TUNING: "true"
         BC_DEV_SERVICES_ENABLED: "true"
         BC_MANAGEMENT_SERVICES_ENABLED: "true"
         BC_MANAGEMENT_API_SERVICES_ENABLED: "true"
@@ -210,6 +211,7 @@ jobs:
         # in-container artifact download (~3 min) + BC boot (~3-5 min).
         ./scripts/wait-for-bc-healthy.sh 30
         ./scripts/verify-network-surface.sh
+        ./scripts/verify-sql-persistence.sh
         echo "TOTAL_DURATION=$(($(date +%s) - STEP_START))" >> $GITHUB_ENV
 
     - name: Download timing summary
@@ -240,6 +242,7 @@ jobs:
       BC_USERNAME: bcrunner
       BC_PASSWORD: BcRunnerTests!23456
       SA_PASSWORD: BcRunnerSql!23456
+      BC_ENABLE_CI_SQL_TUNING: "true"
       BC_DEV_SERVICES_ENABLED: "true"
       BC_MANAGEMENT_SERVICES_ENABLED: "true"
       BC_MANAGEMENT_API_SERVICES_ENABLED: "true"

@@ -58,6 +58,7 @@ jobs:
       BC_PASSWORD: BcRunnerTests!23456
       SA_PASSWORD: BcRunnerSql!23456
       BC_INCLUDE_TEST_TOOLKIT: ${{ inputs.include_test_toolkit }}
+      BC_ENABLE_CI_SQL_TUNING: 'true'
       BC_DEV_SERVICES_ENABLED: 'true'
       BC_MANAGEMENT_SERVICES_ENABLED: 'true'
       BC_MANAGEMENT_API_SERVICES_ENABLED: 'true'

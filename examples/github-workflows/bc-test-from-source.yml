@@ -48,6 +48,7 @@ env:
   BC_PASSWORD: "replace-with-a-strong-password"
   SA_PASSWORD: "replace-with-a-strong-sql-password"
   BC_INCLUDE_TEST_TOOLKIT: "true"
+  BC_ENABLE_CI_SQL_TUNING: "true"
   BC_DEV_SERVICES_ENABLED: "true"
   BC_MANAGEMENT_SERVICES_ENABLED: "true"
   BC_MANAGEMENT_API_SERVICES_ENABLED: "true"

@@ -140,6 +140,9 @@ All flavours:
    - `CODEUNIT_RANGE` — IDs of your test codeunits. Accepts `70000..70099`
      (single range), `70000..70099|130450..130459` (multiple ranges,
      pipe-separated), `70000,70001,70002` (explicit ids), or any mix.
+   - `BC_ENABLE_CI_SQL_TUNING` — keep `true` for these disposable CI
+     containers. The runtime default is `false` so durable Compose stacks keep
+     SQL Server safety defaults.
 3. **Commit & push**. The workflow runs on every push and PR to `main`/`master`,
    plus manually via the Actions tab.
 
@@ -151,6 +154,9 @@ All flavours:
   CRONUS demo DB, and exposes the standard BC service endpoints used by
   container automation: Management 7045, Client Services 7046, SOAP 7047,
   OData 7048, Dev 7049, API 7052, WebClient 7085, and Management API 7086.
+  These templates explicitly opt into disposable CI SQL tuning; the runtime
+  default uses a persistent SQL data volume and preserves database safety
+  settings.
 - **Repository checkout**: brings in `docker-compose.yml`, `run-tests.sh`,
   the `TestRunnerExtension.app` (bundled in the image, but the script also
   exists on the host for orchestration), and `download-artifacts.sh`.

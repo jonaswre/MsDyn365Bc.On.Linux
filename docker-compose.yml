@@ -7,9 +7,8 @@ services:
       MSSQL_MEMORY_LIMIT_MB: ${MSSQL_MEMORY_LIMIT_MB:-2048}
     expose:
       - "1433"
-    tmpfs:
-      - /var/opt/mssql/data:size=4g
     volumes:
+      - bc-sql-data:/var/opt/mssql
       - ${BC_ARTIFACTS_DIR:-bc-artifacts}:/bc/artifacts:ro
       # Custom license bind mount also exposed to SQL Server, because the
       # entrypoint imports the license via OPENROWSET BULK which reads the
@@ -61,6 +60,7 @@ services:
       BC_USERNAME: ${BC_USERNAME:?Set BC_USERNAME to a non-default BC user}
       BC_PASSWORD: ${BC_PASSWORD:?Set BC_PASSWORD to a non-default BC password}
       BC_INCLUDE_TEST_TOOLKIT: ${BC_INCLUDE_TEST_TOOLKIT:-false}
+      BC_ENABLE_CI_SQL_TUNING: ${BC_ENABLE_CI_SQL_TUNING:-false}
       BC_CLIENT_SERVICES_ENABLED: ${BC_CLIENT_SERVICES_ENABLED:-true}
       BC_SOAP_SERVICES_ENABLED: ${BC_SOAP_SERVICES_ENABLED:-true}
       BC_ODATA_SERVICES_ENABLED: ${BC_ODATA_SERVICES_ENABLED:-true}
@@ -134,3 +134,4 @@ services:
 volumes:
   bc-artifacts:
   bc-service:
+  bc-sql-data:

@@ -196,6 +196,7 @@ jobs:
       SA_PASSWORD: BcRunnerSql!23456
       BC_CLEAR_ALL_APPS: 'false'
       BC_INCLUDE_TEST_TOOLKIT: 'false'
+      BC_ENABLE_CI_SQL_TUNING: 'true'
       BC_DEV_SERVICES_ENABLED: 'true'
       BC_MANAGEMENT_SERVICES_ENABLED: 'true'
       BC_MANAGEMENT_API_SERVICES_ENABLED: 'true'
