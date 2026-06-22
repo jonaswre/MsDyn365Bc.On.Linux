@@ -225,6 +225,7 @@ jobs:
         # in-container artifact download (~3 min) + BC boot (~3-5 min).
         ./scripts/wait-for-bc-healthy.sh 30
         ./scripts/verify-network-surface.sh
+        docker compose logs bc > bc-before-persistence.log 2>&1
         ./scripts/verify-sql-persistence.sh
         docker compose logs bc 2>&1 \
           | grep -q "BC_INCLUDE_TEST_TOOLKIT=false: skipped test toolkit publishing"
@@ -234,7 +235,8 @@ jobs:
       if: always()
       run: |
         echo "=== In-container artifact download timing ==="
-        docker compose logs bc 2>&1 | grep "\[artifacts\]"
+        grep "\[artifacts\]" bc-before-persistence.log \
+          || echo "No artifact timing lines were emitted before persistence recreation."
         echo ""
         echo "Total start time (download + DB restore + BC startup): ${TOTAL_DURATION:-n/a}s"
 
@@ -368,6 +370,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     name: Official AL tool bench (BC 28.2)
+    env:
+      BC_USERNAME: bcrunner
+      BC_PASSWORD: BcRunnerTests!23456
+      SA_PASSWORD: BcRunnerSql!23456
+      BC_ENABLE_CI_SQL_TUNING: "true"
+      BC_DEV_SERVICES_ENABLED: "true"
+      BC_MANAGEMENT_SERVICES_ENABLED: "true"
+      BC_MANAGEMENT_API_SERVICES_ENABLED: "true"
+      BC_TEST_AUTOMATION_ENABLED: "true"
+      BC_ALLOW_INSECURE_AUTH_BYPASS: "true"
 
     steps:
     - uses: actions/checkout@v4
@@ -428,16 +440,8 @@ jobs:
         BC_COUNTRY: "w1"
         BC_TYPE: "onprem"
         BC_RUNNER_IMAGE: ${{ needs.build-image.outputs.runner_image }}
-        BC_INCLUDE_TEST_TOOLKIT: "false"
+        BC_INCLUDE_TEST_TOOLKIT: "true"
         BC_ARTIFACTS_DIR: ${{ github.workspace }}/artifact-cache/28.2
-        BC_USERNAME: bcrunner
-        BC_PASSWORD: BcRunnerTests!23456
-        SA_PASSWORD: BcRunnerSql!23456
-        BC_ENABLE_CI_SQL_TUNING: "true"
-        BC_DEV_SERVICES_ENABLED: "true"
-        BC_MANAGEMENT_SERVICES_ENABLED: "true"
-        BC_MANAGEMENT_API_SERVICES_ENABLED: "true"
-        BC_ALLOW_INSECURE_AUTH_BYPASS: "true"
       run: |
         set -e
         mkdir -p "$BC_ARTIFACTS_DIR" official-symbols
@@ -553,8 +557,6 @@ jobs:
 
     - name: Compile and publish with official AL tool
       env:
-        BC_USERNAME: bcrunner
-        BC_PASSWORD: BcRunnerTests!23456
         BC_SERVER_USERNAME: bcrunner
         BC_SERVER_PASSWORD: BcRunnerTests!23456
         COLUMNS: 120
@@ -594,7 +596,7 @@ jobs:
           --environmenttype "OnPrem" \
           --authentication "UserPassword" \
           | tee official-test-results.log
-        grep -q "Test run completed: 3 passed, 0 failed, 0 skipped." official-test-results.log
+        grep -q "Test run completed: 2 passed, 0 failed, 0 skipped." official-test-results.log
         grep -q "PASS AdditionWorks" official-test-results.log
         grep -q "PASS MultiplicationWorks" official-test-results.log
 

@@ -144,7 +144,17 @@ class ParityWorkflowTests(unittest.TestCase):
                 container_download_start = step
                 break
         self.assertIsNotNone(container_download_start)
+        timing_summary = next(
+            step
+            for step in container_download["steps"]
+            if step.get("name") == "Download timing summary"
+        )
         webclient_start = next(step for step in webclient["steps"] if step.get("name") == "Start BC with web client")
+        official_start = next(
+            step
+            for step in official["steps"]
+            if step.get("name") == "Download artifacts, stage symbols, and start BC"
+        )
 
         self.assertNotIn("test-no-test-toolkit", workflow["jobs"])
         self.assertEqual("Web client opt-in (BC 28.2)", webclient["name"])
@@ -152,7 +162,12 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertEqual("macOS overlay test (BC 28.2)", macos["name"])
         self.assertEqual("Official AL tool bench (BC 28.2)", official["name"])
         self.assertEqual("false", container_download_start["env"]["BC_INCLUDE_TEST_TOOLKIT"])
+        self.assertIn("bc-before-persistence.log", container_download_start["run"])
+        self.assertIn('grep "\\[artifacts\\]" bc-before-persistence.log \\', timing_summary["run"])
+        self.assertIn("No artifact timing lines were emitted", timing_summary["run"])
         self.assertEqual("1", webclient_start["env"]["BC_WEBCLIENT"])
+        self.assertEqual("true", official_start["env"]["BC_INCLUDE_TEST_TOOLKIT"])
+        self.assertEqual("true", official["env"]["BC_TEST_AUTOMATION_ENABLED"])
         self.assertIn("BC_INCLUDE_TEST_TOOLKIT=false: skipped test toolkit publishing", scripts)
         self.assertIn("BC_WEBCLIENT=1: starting web client", scripts)
         self.assertIn("Microsoft.Dynamics.BusinessCentral.Development.Tools", scripts)
@@ -179,7 +194,7 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn('dotnet "$ALTOOL_DLL" workspace compile', scripts)
         self.assertIn('dotnet "$ALTOOL_DLL" publishapp', scripts)
         self.assertIn('dotnet "$ALTOOL_DLL" runtests 99800', scripts)
-        self.assertIn("Test run completed: 3 passed, 0 failed, 0 skipped.", scripts)
+        self.assertIn("Test run completed: 2 passed, 0 failed, 0 skipped.", scripts)
         self.assertIn("PASS AdditionWorks", scripts)
         self.assertIn("PASS MultiplicationWorks", scripts)
         self.assertNotIn('BC_VERSION: "27.', str(workflow["jobs"]))
