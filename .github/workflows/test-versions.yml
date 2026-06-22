@@ -143,6 +143,9 @@ jobs:
       bc_version: ${{ matrix.bc_version }}
       bc_country: w1
       bc_type: onprem
+      bc_username: bcrunner
+      bc_password: BcRunnerTests!23456
+      sql_sa_password: BcRunnerSql!23456
       test_app_dirs: extensions/smoke-test
       # Use the selected repository tag from build-image (latest) because
       # test-versions does not publish images.
@@ -207,6 +210,14 @@ jobs:
         BC_VERSION: "28.2"
         BC_INCLUDE_TEST_TOOLKIT: "false"
         BC_RUNNER_IMAGE: ${{ needs.build-image.outputs.runner_image }}
+        BC_USERNAME: bcrunner
+        BC_PASSWORD: BcRunnerTests!23456
+        SA_PASSWORD: BcRunnerSql!23456
+        BC_ENABLE_CI_SQL_TUNING: "true"
+        BC_DEV_SERVICES_ENABLED: "true"
+        BC_MANAGEMENT_SERVICES_ENABLED: "true"
+        BC_MANAGEMENT_API_SERVICES_ENABLED: "true"
+        BC_ALLOW_INSECURE_AUTH_BYPASS: "true"
       run: |
         STEP_START=$(date +%s)
         docker compose up -d 2>&1 | tail -10
@@ -214,6 +225,8 @@ jobs:
         # in-container artifact download (~3 min) + BC boot (~3-5 min).
         ./scripts/wait-for-bc-healthy.sh 30
         ./scripts/verify-network-surface.sh
+        docker compose logs bc > bc-before-persistence.log 2>&1
+        ./scripts/verify-sql-persistence.sh
         docker compose logs bc 2>&1 \
           | grep -q "BC_INCLUDE_TEST_TOOLKIT=false: skipped test toolkit publishing"
         echo "TOTAL_DURATION=$(($(date +%s) - STEP_START))" >> $GITHUB_ENV
@@ -222,7 +235,8 @@ jobs:
       if: always()
       run: |
         echo "=== In-container artifact download timing ==="
-        docker compose logs bc 2>&1 | grep "\[artifacts\]"
+        grep "\[artifacts\]" bc-before-persistence.log \
+          || echo "No artifact timing lines were emitted before persistence recreation."
         echo ""
         echo "Total start time (download + DB restore + BC startup): ${TOTAL_DURATION:-n/a}s"
 
@@ -250,6 +264,14 @@ jobs:
         BC_VERSION: "28.2"
         BC_WEBCLIENT: "1"
         BC_RUNNER_IMAGE: ${{ needs.build-image.outputs.runner_image }}
+        BC_USERNAME: bcrunner
+        BC_PASSWORD: BcRunnerTests!23456
+        SA_PASSWORD: BcRunnerSql!23456
+        BC_ENABLE_CI_SQL_TUNING: "true"
+        BC_DEV_SERVICES_ENABLED: "true"
+        BC_MANAGEMENT_SERVICES_ENABLED: "true"
+        BC_MANAGEMENT_API_SERVICES_ENABLED: "true"
+        BC_ALLOW_INSECURE_AUTH_BYPASS: "true"
       run: |
         docker compose up -d 2>&1 | tail -10
         ./scripts/wait-for-bc-healthy.sh 30
@@ -283,6 +305,14 @@ jobs:
     name: macOS overlay test (BC 28.2)
     env:
       COMPOSE_FILE: docker-compose.yml:docker-compose.macos.yml
+      BC_USERNAME: bcrunner
+      BC_PASSWORD: BcRunnerTests!23456
+      SA_PASSWORD: BcRunnerSql!23456
+      BC_ENABLE_CI_SQL_TUNING: "true"
+      BC_DEV_SERVICES_ENABLED: "true"
+      BC_MANAGEMENT_SERVICES_ENABLED: "true"
+      BC_MANAGEMENT_API_SERVICES_ENABLED: "true"
+      BC_ALLOW_INSECURE_AUTH_BYPASS: "true"
 
     steps:
     - uses: actions/checkout@v4
@@ -340,6 +370,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     name: Official AL tool bench (BC 28.2)
+    env:
+      BC_USERNAME: bcrunner
+      BC_PASSWORD: BcRunnerTests!23456
+      SA_PASSWORD: BcRunnerSql!23456
+      BC_ENABLE_CI_SQL_TUNING: "true"
+      BC_DEV_SERVICES_ENABLED: "true"
+      BC_MANAGEMENT_SERVICES_ENABLED: "true"
+      BC_MANAGEMENT_API_SERVICES_ENABLED: "true"
+      BC_TEST_AUTOMATION_ENABLED: "true"
+      BC_ALLOW_INSECURE_AUTH_BYPASS: "true"
 
     steps:
     - uses: actions/checkout@v4
@@ -400,7 +440,7 @@ jobs:
         BC_COUNTRY: "w1"
         BC_TYPE: "onprem"
         BC_RUNNER_IMAGE: ${{ needs.build-image.outputs.runner_image }}
-        BC_INCLUDE_TEST_TOOLKIT: "false"
+        BC_INCLUDE_TEST_TOOLKIT: "true"
         BC_ARTIFACTS_DIR: ${{ github.workspace }}/artifact-cache/28.2
       run: |
         set -e
@@ -455,8 +495,8 @@ jobs:
 
     - name: Seed official AL tool UserPassword cache
       env:
-        BC_SERVER_USERNAME: admin
-        BC_SERVER_PASSWORD: admin
+        BC_SERVER_USERNAME: bcrunner
+        BC_SERVER_PASSWORD: BcRunnerTests!23456
       run: |
         set -e
         SEED_DIR="$RUNNER_TEMP/altool-userpassword-cache"
@@ -517,8 +557,8 @@ jobs:
 
     - name: Compile and publish with official AL tool
       env:
-        BC_SERVER_USERNAME: admin
-        BC_SERVER_PASSWORD: admin
+        BC_SERVER_USERNAME: bcrunner
+        BC_SERVER_PASSWORD: BcRunnerTests!23456
         COLUMNS: 120
         TERM: xterm
       run: |

@@ -144,7 +144,17 @@ class ParityWorkflowTests(unittest.TestCase):
                 container_download_start = step
                 break
         self.assertIsNotNone(container_download_start)
+        timing_summary = next(
+            step
+            for step in container_download["steps"]
+            if step.get("name") == "Download timing summary"
+        )
         webclient_start = next(step for step in webclient["steps"] if step.get("name") == "Start BC with web client")
+        official_start = next(
+            step
+            for step in official["steps"]
+            if step.get("name") == "Download artifacts, stage symbols, and start BC"
+        )
 
         self.assertNotIn("test-no-test-toolkit", workflow["jobs"])
         self.assertEqual("Web client opt-in (BC 28.2)", webclient["name"])
@@ -152,7 +162,12 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertEqual("macOS overlay test (BC 28.2)", macos["name"])
         self.assertEqual("Official AL tool bench (BC 28.2)", official["name"])
         self.assertEqual("false", container_download_start["env"]["BC_INCLUDE_TEST_TOOLKIT"])
+        self.assertIn("bc-before-persistence.log", container_download_start["run"])
+        self.assertIn('grep "\\[artifacts\\]" bc-before-persistence.log \\', timing_summary["run"])
+        self.assertIn("No artifact timing lines were emitted", timing_summary["run"])
         self.assertEqual("1", webclient_start["env"]["BC_WEBCLIENT"])
+        self.assertEqual("true", official_start["env"]["BC_INCLUDE_TEST_TOOLKIT"])
+        self.assertEqual("true", official["env"]["BC_TEST_AUTOMATION_ENABLED"])
         self.assertIn("BC_INCLUDE_TEST_TOOLKIT=false: skipped test toolkit publishing", scripts)
         self.assertIn("BC_WEBCLIENT=1: starting web client", scripts)
         self.assertIn("Microsoft.Dynamics.BusinessCentral.Development.Tools", scripts)
@@ -279,6 +294,94 @@ class ParityWorkflowTests(unittest.TestCase):
 
         self.assertNotIn("YOURBC-SERVICEUSER", script)
 
+    def test_compose_requires_explicit_credentials_and_internal_sql(self):
+        compose_text = Path("docker-compose.yml").read_text(encoding="utf-8")
+        compose = yaml.safe_load(compose_text)
+
+        sql = compose["services"]["sql"]
+
+        self.assertNotIn("ports", sql)
+        self.assertIn("1433", sql.get("expose", []))
+        self.assertIn("${SA_PASSWORD:?", compose_text)
+        self.assertIn("${BC_USERNAME:?", compose_text)
+        self.assertIn("${BC_PASSWORD:?", compose_text)
+        self.assertNotIn("Passw0rd123!", compose_text)
+        self.assertNotIn("${BC_PASSWORD:-admin}", compose_text)
+        self.assertNotIn("${BC_USERNAME:-admin}", compose_text)
+
+    def test_compose_uses_persistent_sql_data_volume(self):
+        compose_text = Path("docker-compose.yml").read_text(encoding="utf-8")
+        compose = yaml.safe_load(compose_text)
+
+        sql = compose["services"]["sql"]
+        bc = compose["services"]["bc"]
+
+        self.assertNotIn("tmpfs", sql)
+        self.assertIn("bc-sql-data:/var/opt/mssql", sql["volumes"])
+        self.assertIn("bc-sql-data", compose["volumes"])
+        self.assertEqual(
+            "${BC_ENABLE_CI_SQL_TUNING:-false}",
+            bc["environment"]["BC_ENABLE_CI_SQL_TUNING"],
+        )
+        self.assertIn("bc-sql-data", compose_text)
+
+    def test_entrypoint_gates_ci_sql_tuning_and_avoids_sysadmin(self):
+        script = Path("scripts/entrypoint.sh").read_text(encoding="utf-8")
+
+        self.assertIn("BC_ENABLE_CI_SQL_TUNING", script)
+        self.assertIn('is_truthy "${BC_ENABLE_CI_SQL_TUNING:-false}"', script)
+        self.assertIn("ALTER ROLE [db_owner] ADD MEMBER [$BC_DB_USER_IDENT]", script)
+        self.assertIn('SQLCMD_SA_DB="sqlcmd -S $SQL_SERVER -U sa -P $SA_PASSWORD -d CRONUS -C -No"', script)
+        self.assertIn('$SQLCMD_SA_DB -Q "', script)
+        self.assertNotIn("ALTER SERVER ROLE sysadmin ADD MEMBER", script)
+        self.assertIn("SQL CI tuning disabled", script)
+
+    def test_sql_persistence_check_recreates_stack_without_removing_volumes(self):
+        script_path = Path("scripts/verify-sql-persistence.sh")
+
+        self.assertTrue(script_path.exists())
+        script = script_path.read_text(encoding="utf-8")
+
+        self.assertIn("docker compose down", script)
+        self.assertNotIn("docker compose down -v", script)
+        self.assertIn("bc_sql_persistence_marker", script)
+        self.assertIn("docker compose up -d", script)
+        self.assertIn("scripts/wait-for-bc-healthy.sh", script)
+        self.assertIn("Persistence marker survived container recreation", script)
+
+    def test_container_download_job_verifies_sql_persistence(self):
+        workflow = yaml.safe_load(Path(".github/workflows/test-versions.yml").read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["test-container-download"]["steps"]
+        scripts = "\n".join(step.get("run", "") for step in steps)
+
+        self.assertIn("./scripts/verify-sql-persistence.sh", scripts)
+
+    def test_compose_binds_host_ports_to_loopback(self):
+        compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
+        ports = compose["services"]["bc"]["ports"]
+
+        self.assertTrue(ports)
+        for port in ports:
+            self.assertTrue(str(port).startswith("127.0.0.1:"), port)
+
+    def test_entrypoint_hardens_dev_test_defaults(self):
+        script = Path("scripts/entrypoint.sh").read_text(encoding="utf-8")
+
+        self.assertIn('BC_INCLUDE_TEST_TOOLKIT="${BC_INCLUDE_TEST_TOOLKIT:-false}"', script)
+        self.assertIn('BC_DEV_SERVICES_ENABLED="${BC_DEV_SERVICES_ENABLED:-false}"', script)
+        self.assertIn('BC_MANAGEMENT_SERVICES_ENABLED="${BC_MANAGEMENT_SERVICES_ENABLED:-false}"', script)
+        self.assertIn('BC_MANAGEMENT_API_SERVICES_ENABLED="${BC_MANAGEMENT_API_SERVICES_ENABLED:-false}"', script)
+        self.assertIn('BC_TEST_AUTOMATION_ENABLED="${BC_TEST_AUTOMATION_ENABLED:-false}"', script)
+        self.assertIn("validate_required_credentials", script)
+        self.assertIn("Refusing default BC credentials", script)
+
+    def test_auth_bypass_requires_explicit_opt_in(self):
+        source = Path("src/StartupHook/StartupHook.cs").read_text(encoding="utf-8")
+
+        self.assertIn("BC_ALLOW_INSECURE_AUTH_BYPASS", source)
+        self.assertIn("IsTruthy", source)
+        self.assertIn("NavUser.TryAuthenticate bypass disabled", source)
+
     def test_linux_contract_loads_keep_app_ids_before_startup(self):
         steps = self.linux_contract_job()["steps"]
         start_index = self.step_names().index("Start Linux BC")
@@ -334,6 +437,17 @@ class ParityWorkflowTests(unittest.TestCase):
             self.assertEqual("docker/login-action@v3", login["uses"])
             self.assertEqual("ghcr.io", login["with"]["registry"])
             self.assertEqual("${{ github.token }}", login["with"]["password"])
+
+    def test_reusable_workflows_require_explicit_credentials(self):
+        for workflow in (
+            self.bc_test_from_source_workflow(),
+            self.bc_test_prebuilt_workflow(),
+        ):
+            inputs = workflow[True]["workflow_call"]["inputs"]
+            for name in ("bc_username", "bc_password", "sql_sa_password"):
+                with self.subTest(workflow=workflow["name"], input=name):
+                    self.assertTrue(inputs[name]["required"])
+                    self.assertNotIn("default", inputs[name])
 
 
     def test_linux_diagnostics_are_captured_after_contract_collection(self):

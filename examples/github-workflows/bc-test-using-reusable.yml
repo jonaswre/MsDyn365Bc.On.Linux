@@ -25,6 +25,9 @@ jobs:
     with:
       bc_version:     "latest"
       bc_country:     "w1"
+      bc_username:    ${{ vars.BC_USERNAME }}
+      bc_password:    ${{ secrets.BC_PASSWORD }}
+      sql_sa_password: ${{ secrets.BC_SQL_SA_PASSWORD }}
       app_dirs:       "app"          # space-separated dirs containing app.json
       test_app_dirs:  "test"         # ditto for test apps
 
@@ -79,6 +82,9 @@ jobs:
   #   uses: jonaswre/MsDyn365Bc.On.Linux/.github/workflows/bc-test-prebuilt.yml@master
   #   with:
   #     bc_version:     "latest"
+  #     bc_username:    ${{ vars.BC_USERNAME }}
+  #     bc_password:    ${{ secrets.BC_PASSWORD }}
+  #     sql_sa_password: ${{ secrets.BC_SQL_SA_PASSWORD }}
   #     test_app_files: "tests/MyTests.app"
   #   # Same optional license pattern as above:
   #   # secrets:

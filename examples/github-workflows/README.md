@@ -6,7 +6,7 @@ repo. All flavours pull the public
 and use the bundled scripts to boot BC and publish your apps. Test execution is
 owned by your project's runner against the standard BC container endpoints.
 
-## ✨ Recommended: reusable workflow (10-line consumer file)
+## Recommended: reusable workflow
 
 This repo ships two **reusable workflows** in its own `.github/workflows/`
 that you can call from your repo. The consumer file is tiny:
@@ -22,6 +22,9 @@ jobs:
       bc_version:     "latest"
       app_dirs:       "app"
       test_app_dirs:  "test"
+      bc_username:    ${{ vars.BC_USERNAME }}
+      bc_password:    ${{ secrets.BC_PASSWORD }}
+      sql_sa_password: ${{ secrets.BC_SQL_SA_PASSWORD }}
 ```
 
 Two flavours are available — pick whichever fits:
@@ -45,8 +48,9 @@ reproducible CI runs swap it for a release tag once one exists
 | `bc_version` | no | `latest` | BC platform version. Use `latest` for the newest artifact, or pin a major/minor/full version such as `28.1`. |
 | `bc_country` | no | `w1` | BC country code |
 | `bc_type` | no | `onprem` | `onprem` or `sandbox` |
-| `bc_username` | no | `admin` | NavUserPassword username for OData/API/Dev/WebClient access |
-| `bc_password` | no | `admin` | NavUserPassword password for OData/API/Dev/WebClient access |
+| `bc_username` | **yes** | — | NavUserPassword username for OData/API/Dev/WebClient access |
+| `bc_password` | **yes** | — | NavUserPassword password for OData/API/Dev/WebClient access |
+| `sql_sa_password` | **yes** | — | SQL Server sa password for the disposable test container |
 | `app_dirs` | no | `""` | Space-separated dirs containing `app.json` for production apps |
 | `test_app_dirs` | **yes** | — | Space-separated dirs containing `app.json` for test apps |
 | `codeunit_range` | no | `""` | Deprecated compatibility input. This workflow no longer ships a test runner. |
@@ -108,13 +112,14 @@ All flavours:
 1. **Copy** `bc-test-using-reusable.yml` into your repo at
    `.github/workflows/bc-container.yml` (or any name you like).
 2. **Edit the `with:` block**:
-   - `BC_VERSION`, `BC_COUNTRY`, `BC_TYPE` — which Microsoft BC build to test
-     against. The inline templates stay pinned for reproducible copy-paste
-     builds; the reusable workflows default to `latest`.
+   - `bc_version`, `bc_country`, `bc_type` — which Microsoft BC build to test
+     against. The reusable workflows default to `latest`.
    - **From-source**: `APP_DIRS` and `TEST_APP_DIRS` — space-separated paths
      to directories containing `app.json`.
    - **Pre-built**: `APP_FILES` and `TEST_APP_FILES` — space-separated paths
      to `.app` files in your repo.
+   - `bc_username`, `bc_password`, and `sql_sa_password` — pass explicit
+     non-default credentials for the disposable CI stack.
 3. **Commit & push**. The workflow runs on every push and PR to `main`/`master`,
    plus manually via the Actions tab.
 
@@ -128,6 +133,10 @@ All flavours:
   OData 7048, Dev 7049, API 7052, WebClient 7085, and Management API 7086.
 - **Repository checkout**: brings in `docker-compose.yml`,
   `download-artifacts.sh`, publish helpers, and the startup scripts.
+- **Runtime hardening**: the base Compose file keeps SQL internal, persists
+  SQL data by default, and disables dev/test/admin surfaces unless explicitly
+  enabled. The reusable CI workflows run disposable containers and opt into
+  the CI-only services they need.
 
 ## Custom analyzers and rulesets
 
@@ -136,10 +145,9 @@ AppSourceCop / PerTenantExtensionCop / UICop), arbitrary custom cops,
 and JSON rulesets — including rulesets that include remote ones via
 `includedRuleSets[].path` URLs.
 
-The reusable workflow exposes them as inputs (see the table above).
-The inlined templates expose the same set as `env:` block variables.
-Both default to off, so existing workflows that don't touch these see
-zero behaviour change.
+The reusable workflow exposes them as inputs (see the table above). They
+default to off, so existing workflows that don't touch these see zero behaviour
+change.
 
 When **any** analyzer is configured, the compile step captures
 output and fails the workflow if it sees `AD0001`, `Could not load`,
@@ -158,6 +166,9 @@ jobs:
       bc_version:     "latest"
       app_dirs:       "app"
       test_app_dirs:  "test"
+      bc_username:    ${{ vars.BC_USERNAME }}
+      bc_password:    ${{ secrets.BC_PASSWORD }}
+      sql_sa_password: ${{ secrets.BC_SQL_SA_PASSWORD }}
       enable_code_cop: true
       enable_ui_cop: true
       enable_app_source_cop: true

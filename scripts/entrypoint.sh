@@ -19,6 +19,44 @@ sql_escape() {
     printf "%s" "$1" | sed "s/'/''/g"
 }
 
+sql_identifier_escape() {
+    printf "%s" "$1" | sed "s/]/]]/g"
+}
+
+is_truthy() {
+    case "$(printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+        true|1|yes|y|on) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+normalize_bool() {
+    if is_truthy "$1"; then
+        printf "true"
+    else
+        printf "false"
+    fi
+}
+
+validate_required_credentials() {
+    if [ -z "${SA_PASSWORD:-}" ]; then
+        log_step "ERROR: SA_PASSWORD is required and must not use the old default"
+        exit 1
+    fi
+    if [ -z "${BC_USERNAME:-}" ] || [ -z "${BC_PASSWORD:-}" ]; then
+        log_step "ERROR: BC_USERNAME and BC_PASSWORD are required"
+        exit 1
+    fi
+    if [ "$SA_PASSWORD" = "Passw0rd123!" ]; then
+        log_step "ERROR: Refusing default SQL SA password"
+        exit 1
+    fi
+    if [ "$BC_USERNAME" = "admin" ] && [ "$BC_PASSWORD" = "admin" ]; then
+        log_step "ERROR: Refusing default BC credentials"
+        exit 1
+    fi
+}
+
 set_config_value() {
     local config_file="$1"
     local key="$2"
@@ -137,17 +175,45 @@ BC_TYPE="${BC_TYPE:-onprem}"
 BC_VERSION="${BC_VERSION:-latest}"
 BC_COUNTRY="${BC_COUNTRY:-w1}"
 ACCEPT_EULA="${ACCEPT_EULA:-Y}"
-SA_PASSWORD="${SA_PASSWORD:-Passw0rd123!}"
+SA_PASSWORD="${SA_PASSWORD:-}"
 BC_DB_PASSWORD="${BC_DB_PASSWORD:-Test1234}"
 BC_DB_USER="${BC_DB_USER:-bctest}"
-BC_USERNAME="${BC_USERNAME:-admin}"
-BC_PASSWORD="${BC_PASSWORD:-admin}"
+BC_DB_USER_SQL=$(sql_escape "$BC_DB_USER")
+BC_DB_USER_IDENT=$(sql_identifier_escape "$BC_DB_USER")
+BC_DB_PASSWORD_SQL=$(sql_escape "$BC_DB_PASSWORD")
+BC_USERNAME="${BC_USERNAME:-}"
+BC_PASSWORD="${BC_PASSWORD:-}"
+validate_required_credentials
 BC_AUTH="${BC_USERNAME}:${BC_PASSWORD}"
-BC_INCLUDE_TEST_TOOLKIT="${BC_INCLUDE_TEST_TOOLKIT:-true}"
+BC_INCLUDE_TEST_TOOLKIT="${BC_INCLUDE_TEST_TOOLKIT:-false}"
 case "$(printf "%s" "$BC_INCLUDE_TEST_TOOLKIT" | tr '[:upper:]' '[:lower:]')" in
     true|1|yes|y|on) BC_INCLUDE_TEST_TOOLKIT_ENABLED=true ;;
     *) BC_INCLUDE_TEST_TOOLKIT_ENABLED=false ;;
 esac
+BC_CLIENT_SERVICES_ENABLED="${BC_CLIENT_SERVICES_ENABLED:-true}"
+BC_SOAP_SERVICES_ENABLED="${BC_SOAP_SERVICES_ENABLED:-true}"
+BC_ODATA_SERVICES_ENABLED="${BC_ODATA_SERVICES_ENABLED:-true}"
+BC_API_SERVICES_ENABLED="${BC_API_SERVICES_ENABLED:-true}"
+BC_DEV_SERVICES_ENABLED="${BC_DEV_SERVICES_ENABLED:-false}"
+BC_MANAGEMENT_SERVICES_ENABLED="${BC_MANAGEMENT_SERVICES_ENABLED:-false}"
+BC_MANAGEMENT_API_SERVICES_ENABLED="${BC_MANAGEMENT_API_SERVICES_ENABLED:-false}"
+BC_TEST_AUTOMATION_ENABLED="${BC_TEST_AUTOMATION_ENABLED:-false}"
+BC_ENABLE_CI_SQL_TUNING="${BC_ENABLE_CI_SQL_TUNING:-false}"
+BC_CLIENT_SERVICES_ENABLED_BOOL=$(normalize_bool "$BC_CLIENT_SERVICES_ENABLED")
+BC_SOAP_SERVICES_ENABLED_BOOL=$(normalize_bool "$BC_SOAP_SERVICES_ENABLED")
+BC_ODATA_SERVICES_ENABLED_BOOL=$(normalize_bool "$BC_ODATA_SERVICES_ENABLED")
+BC_API_SERVICES_ENABLED_BOOL=$(normalize_bool "$BC_API_SERVICES_ENABLED")
+BC_DEV_SERVICES_ENABLED_BOOL=$(normalize_bool "$BC_DEV_SERVICES_ENABLED")
+BC_MANAGEMENT_SERVICES_ENABLED_BOOL=$(normalize_bool "$BC_MANAGEMENT_SERVICES_ENABLED")
+BC_MANAGEMENT_API_SERVICES_ENABLED_BOOL=$(normalize_bool "$BC_MANAGEMENT_API_SERVICES_ENABLED")
+BC_TEST_AUTOMATION_ENABLED_BOOL=$(normalize_bool "$BC_TEST_AUTOMATION_ENABLED")
+if [ -n "${BC_TENANT_ENVIRONMENT_TYPE:-}" ]; then
+    TENANT_ENVIRONMENT_TYPE="$BC_TENANT_ENVIRONMENT_TYPE"
+elif [ "$BC_TEST_AUTOMATION_ENABLED_BOOL" = "true" ]; then
+    TENANT_ENVIRONMENT_TYPE="Sandbox"
+else
+    TENANT_ENVIRONMENT_TYPE="Production"
+fi
 BC_API_REQUEST_LIMIT="${BC_API_REQUEST_LIMIT:-50}"
 SQL_SERVER="${SQL_SERVER:-sql}"
 ARTIFACTS="/bc/artifacts"
@@ -241,7 +307,7 @@ if [ ! -f "$SERVICE_DIR/Microsoft.Dynamics.Nav.Server.dll" ]; then
         -e "s|DatabaseUserName\" value=\"[^\"]*\"|DatabaseUserName\" value=\"$BC_DB_USER\"|" \
         -e "s|ProtectedDatabasePassword\" value=\"[^\"]*\"|ProtectedDatabasePassword\" value=\"$BC_DB_PASSWORD\"|" \
         -e "s|ClientServicesCredentialType\" value=\"[^\"]*\"|ClientServicesCredentialType\" value=\"NavUserPassword\"|" \
-        -e "s|DeveloperServicesEnabled\" value=\"[^\"]*\"|DeveloperServicesEnabled\" value=\"true\"|" \
+        -e "s|DeveloperServicesEnabled\" value=\"[^\"]*\"|DeveloperServicesEnabled\" value=\"$BC_DEV_SERVICES_ENABLED_BOOL\"|" \
         -e "s|TrustSQLServerCertificate\" value=\"[^\"]*\"|TrustSQLServerCertificate\" value=\"true\"|" \
         -e "s|ReportingServiceIsSideService\" value=\"[^\"]*\"|ReportingServiceIsSideService\" value=\"false\"|" \
         -e "s|ServerInstance\" value=\"[^\"]*\"|ServerInstance\" value=\"BC\"|" \
@@ -260,29 +326,17 @@ if [ ! -f "$SERVICE_DIR/Microsoft.Dynamics.Nav.Server.dll" ]; then
         set_config_value "$CONFIG" "APIMaxConcurrentRequestsPerUser" "$BC_API_REQUEST_LIMIT"
     fi
 
-    # The compose stack publishes the standard Business Central container
-    # network surface. Make the corresponding service flags explicit so
-    # artifact defaults cannot leave a published port without a listener.
-    for service_flag in \
-        ClientServicesEnabled \
-        SOAPServicesEnabled \
-        ODataServicesEnabled \
-        ApiServicesEnabled \
-        DeveloperServicesEnabled \
-        ManagementServicesEnabled \
-        ManagementApiServicesEnabled; do
-        set_config_value "$CONFIG" "$service_flag" "true"
-    done
-
-    # Ensure TenantEnvironmentType=Sandbox (required for test automation at platform level)
-    if grep -q "TenantEnvironmentType" "$CONFIG"; then
-        sed -i 's|TenantEnvironmentType" value="[^"]*"|TenantEnvironmentType" value="Sandbox"|' "$CONFIG"
-    else
-        sed -i '/<add key="TestAutomationEnabled"/a\  <add key="TenantEnvironmentType" value="Sandbox" />' "$CONFIG"
-    fi
-    if ! grep -q "TestAutomationEnabled" "$CONFIG"; then
-        sed -i '/<\/appSettings>/i\  <add key="TestAutomationEnabled" value="true"/>' "$CONFIG"
-    fi
+    # Keep the standard runtime endpoints explicit. Dev/test/admin surfaces
+    # default off and must be opted into by the caller.
+    set_config_value "$CONFIG" "ClientServicesEnabled" "$BC_CLIENT_SERVICES_ENABLED_BOOL"
+    set_config_value "$CONFIG" "SOAPServicesEnabled" "$BC_SOAP_SERVICES_ENABLED_BOOL"
+    set_config_value "$CONFIG" "ODataServicesEnabled" "$BC_ODATA_SERVICES_ENABLED_BOOL"
+    set_config_value "$CONFIG" "ApiServicesEnabled" "$BC_API_SERVICES_ENABLED_BOOL"
+    set_config_value "$CONFIG" "DeveloperServicesEnabled" "$BC_DEV_SERVICES_ENABLED_BOOL"
+    set_config_value "$CONFIG" "ManagementServicesEnabled" "$BC_MANAGEMENT_SERVICES_ENABLED_BOOL"
+    set_config_value "$CONFIG" "ManagementApiServicesEnabled" "$BC_MANAGEMENT_API_SERVICES_ENABLED_BOOL"
+    set_config_value "$CONFIG" "TestAutomationEnabled" "$BC_TEST_AUTOMATION_ENABLED_BOOL"
+    set_config_value "$CONFIG" "TenantEnvironmentType" "$TENANT_ENVIRONMENT_TYPE"
 
     log_step "Service tier configured."
 else
@@ -521,11 +575,10 @@ SQLCMD="sqlcmd -S $SQL_SERVER -U sa -P $SA_PASSWORD -C -No"
 
 # Create login
 $SQLCMD -Q "
-IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = '$BC_DB_USER')
-    CREATE LOGIN [$BC_DB_USER] WITH PASSWORD = '$BC_DB_PASSWORD', CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;
+IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = '$BC_DB_USER_SQL')
+    CREATE LOGIN [$BC_DB_USER_IDENT] WITH PASSWORD = '$BC_DB_PASSWORD_SQL', CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;
 ELSE
-    ALTER LOGIN [$BC_DB_USER] WITH PASSWORD = '$BC_DB_PASSWORD', CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;
-ALTER SERVER ROLE sysadmin ADD MEMBER [$BC_DB_USER];
+    ALTER LOGIN [$BC_DB_USER_IDENT] WITH PASSWORD = '$BC_DB_PASSWORD_SQL', CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF;
 "
 
 # Restore database if needed
@@ -554,7 +607,19 @@ else
     log_step "CRONUS already exists."
 fi
 
+$SQLCMD -Q "
+USE [CRONUS];
+IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = '$BC_DB_USER_SQL')
+    CREATE USER [$BC_DB_USER_IDENT] FOR LOGIN [$BC_DB_USER_IDENT];
+ELSE
+    ALTER USER [$BC_DB_USER_IDENT] WITH LOGIN = [$BC_DB_USER_IDENT];
+IF ISNULL(IS_ROLEMEMBER(N'db_owner', N'$BC_DB_USER_SQL'), 0) <> 1
+    ALTER ROLE [db_owner] ADD MEMBER [$BC_DB_USER_IDENT];
+" 2>/dev/null
+log_step "BC database login scoped to CRONUS db_owner."
+
 SQLCMD_DB="sqlcmd -S $SQL_SERVER -U $BC_DB_USER -P $BC_DB_PASSWORD -d CRONUS -C -No"
+SQLCMD_SA_DB="sqlcmd -S $SQL_SERVER -U sa -P $SA_PASSWORD -d CRONUS -C -No"
 
 # Encryption key
 $SQLCMD_DB -Q "
@@ -596,15 +661,21 @@ if [ -z "$LICENSE_TO_IMPORT" ] && [ -n "$LICENSE_FILE" ] && [ -f "$ARTIFACTS/app
     LICENSE_TO_IMPORT="$ARTIFACTS/app/$LICENSE_FILE"
 fi
 if [ -n "$LICENSE_TO_IMPORT" ]; then
-    $SQLCMD_DB -Q "
+    LICENSE_TO_IMPORT_SQL=$(sql_escape "$LICENSE_TO_IMPORT")
+    $SQLCMD_SA_DB -Q "
     UPDATE [\$ndo\$dbproperty]
-    SET [license] = (SELECT BulkColumn FROM OPENROWSET(BULK '$LICENSE_TO_IMPORT', SINGLE_BLOB) AS f);
+    SET [license] = (SELECT BulkColumn FROM OPENROWSET(BULK '$LICENSE_TO_IMPORT_SQL', SINGLE_BLOB) AS f);
     " 2>/dev/null
     log_step "License imported: $(basename "$LICENSE_TO_IMPORT")"
 fi
 
-# Sandbox tenant type
-$SQLCMD_DB -Q "UPDATE [\$ndo\$tenantproperty] SET tenanttype = 1;" 2>/dev/null
+# Tenant type: production by default, sandbox only when test automation is enabled
+if [ "$(printf "%s" "$TENANT_ENVIRONMENT_TYPE" | tr '[:upper:]' '[:lower:]')" = "sandbox" ]; then
+    TENANT_TYPE_SQL=1
+else
+    TENANT_TYPE_SQL=0
+fi
+$SQLCMD_DB -Q "UPDATE [\$ndo\$tenantproperty] SET tenanttype = $TENANT_TYPE_SQL;" 2>/dev/null
 
 # Normalize demo-DB user time zones to UTC. The CRONUS backup ships
 # [User Personalization].[Time Zone] = 'Europe/Amsterdam' for the default
@@ -614,9 +685,10 @@ $SQLCMD_DB -Q "UPDATE [\$ndo\$tenantproperty] SET tenanttype = 1;" 2>/dev/null
 # data-side half so the shipped demo data is clean to begin with.
 $SQLCMD_DB -Q "UPDATE [User Personalization] SET [Time Zone] = N'UTC' WHERE [Time Zone] <> N'UTC';" 2>/dev/null
 
-# SQL performance tuning for CI/CD — disable safety overhead not needed for test runs
-# ALTER DATABASE must run from master context, not from within the target database
-$SQLCMD -Q "
+if is_truthy "${BC_ENABLE_CI_SQL_TUNING:-false}"; then
+    # SQL performance tuning for disposable CI/test stacks only.
+    # ALTER DATABASE must run from master context, not from within the target database.
+    $SQLCMD -Q "
 ALTER DATABASE CRONUS SET QUERY_STORE = OFF;
 ALTER DATABASE CRONUS SET AUTO_UPDATE_STATISTICS OFF;
 ALTER DATABASE CRONUS SET AUTO_UPDATE_STATISTICS_ASYNC OFF;
@@ -624,8 +696,8 @@ ALTER DATABASE CRONUS SET AUTO_CREATE_STATISTICS OFF;
 ALTER DATABASE CRONUS SET PAGE_VERIFY NONE;
 ALTER DATABASE CRONUS SET DELAYED_DURABILITY = FORCED;
 " 2>/dev/null
-# Disable change tracking (must disable on tables first, from CRONUS context)
-$SQLCMD_DB -Q "
+    # Disable change tracking (must disable on tables first, from CRONUS context).
+    $SQLCMD_DB -Q "
 DECLARE @sql NVARCHAR(MAX) = '';
 SELECT @sql = @sql + 'ALTER TABLE [' + s.name + '].[' + t.name + '] DISABLE CHANGE_TRACKING;'
 FROM sys.change_tracking_tables ct
@@ -633,8 +705,11 @@ JOIN sys.tables t ON ct.object_id = t.object_id
 JOIN sys.schemas s ON t.schema_id = s.schema_id;
 IF LEN(@sql) > 0 EXEC sp_executesql @sql;
 " 2>/dev/null
-$SQLCMD -Q "ALTER DATABASE CRONUS SET CHANGE_TRACKING = OFF;" 2>/dev/null
-log_step "SQL tuned for CI/CD (query store, stats, page verify, change tracking OFF)"
+    $SQLCMD -Q "ALTER DATABASE CRONUS SET CHANGE_TRACKING = OFF;" 2>/dev/null
+    log_step "SQL tuned for disposable CI/test stack (query store, stats, page verify, change tracking OFF)"
+else
+    log_step "SQL CI tuning disabled; preserving database safety defaults"
+fi
 
 # Clear pre-installed apps before BC starts.
 # BC_CLEAR_ALL_APPS=true:      clear ALL apps, republish ALL dynamically after NST starts (~300s)
@@ -1035,6 +1110,30 @@ exec 3>/tmp/bc-stdin
     DEV_URL="http://localhost:7049/BC/dev"
     NST_WAIT_START=$(date +%s)
 
+    readiness_probe() {
+        if [ "$BC_CLIENT_SERVICES_ENABLED_BOOL" = "true" ]; then
+            curl -s -o /dev/null -w "%{http_code}" --max-time 3 \
+                -u "$BC_AUTH" "http://localhost:7085/BC/client/SignIn" 2>/dev/null
+            return
+        fi
+        if [ "$BC_ODATA_SERVICES_ENABLED_BOOL" = "true" ]; then
+            curl -s -o /dev/null -w "%{http_code}" --max-time 3 \
+                -u "$BC_AUTH" "http://localhost:7048/BC/ODataV4/Company" 2>/dev/null
+            return
+        fi
+        if [ "$BC_API_SERVICES_ENABLED_BOOL" = "true" ]; then
+            curl -s -o /dev/null -w "%{http_code}" --max-time 3 \
+                -u "$BC_AUTH" "http://localhost:7052/BC/api/v2.0/companies?tenant=${BC_TENANT:-default}" 2>/dev/null
+            return
+        fi
+        if [ "$BC_SOAP_SERVICES_ENABLED_BOOL" = "true" ]; then
+            curl -s -o /dev/null -w "%{http_code}" --max-time 3 \
+                "http://localhost:7047/BC/WS/Services" 2>/dev/null
+            return
+        fi
+        printf "000"
+    }
+
     publish_required_app() {
         local app_path="$1"
         local mode="$2"
@@ -1074,7 +1173,7 @@ exec 3>/tmp/bc-stdin
             wait $BC_PID 2>/dev/null
             exit 1
         fi
-        HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "$DEV_URL/packages" 2>&1)
+        HTTP=$(readiness_probe)
         if [ "$HTTP" != "000" ]; then
             break
         fi
@@ -1082,7 +1181,7 @@ exec 3>/tmp/bc-stdin
     done
     NST_WAIT_ELAPSED=$(( $(date +%s) - NST_WAIT_START ))
     TOTAL_ELAPSED=$(( $(date +%s) - ENTRYPOINT_START ))
-    echo "[entrypoint] [${TOTAL_ELAPSED}s] Dev endpoint ready (HTTP $HTTP) — NST startup: ${NST_WAIT_ELAPSED}s"
+    echo "[entrypoint] [${TOTAL_ELAPSED}s] BC endpoint ready (HTTP $HTTP) — NST startup: ${NST_WAIT_ELAPSED}s"
 
     # Replace Reporting Service .exe with sleep stub NOW (after BC startup probed the assembly).
     # The SideServiceWatchdog will call Process.Start on this path and see a live process.
@@ -1103,8 +1202,22 @@ exec 3>/tmp/bc-stdin
 
     # Publish test framework apps unless caller will handle all publishing.
     # BC_SKIP_APP_PUBLISH=true: skip all publishing (caller manages extensions)
+    NEEDS_DEV_PUBLISH=false
+    if [ "$BC_INCLUDE_TEST_TOOLKIT_ENABLED" = "true" ] || [ -n "${BC_KEEP_APP_IDS:-}" ] || [ -n "${BC_TEST_APPS:-}" ]; then
+        NEEDS_DEV_PUBLISH=true
+    fi
+    case "${BC_CLEAR_ALL_APPS:-false}" in
+        true|selective|deps-only) NEEDS_DEV_PUBLISH=true ;;
+    esac
+
     if [ "${BC_SKIP_APP_PUBLISH:-false}" = "true" ]; then
         echo "[entrypoint] Skipping app publishing (BC_SKIP_APP_PUBLISH=true)"
+    elif [ "$BC_DEV_SERVICES_ENABLED_BOOL" != "true" ] && [ "$NEEDS_DEV_PUBLISH" = "true" ]; then
+        echo "[entrypoint] ERROR: app/test publishing requires BC_DEV_SERVICES_ENABLED=true"
+        kill "$BC_PID" 2>/dev/null || true
+        exit 1
+    elif [ "$BC_DEV_SERVICES_ENABLED_BOOL" != "true" ]; then
+        echo "[entrypoint] DevServices disabled: skipped app publishing"
     else
         # -------------------------------------------------------------------------
         # BC_CLEAR_ALL_APPS: republish all previously-installed extensions in
@@ -1453,8 +1566,12 @@ PYEOF
         fi
     fi
     TOTAL_ELAPSED=$(( $(date +%s) - ENTRYPOINT_START ))
-    start_legacy_management_proxy
-    start_client_services_alias_proxy
+    if [ "$BC_MANAGEMENT_SERVICES_ENABLED_BOOL" = "true" ] || [ "$BC_MANAGEMENT_API_SERVICES_ENABLED_BOOL" = "true" ]; then
+        start_legacy_management_proxy
+    fi
+    if [ "$BC_CLIENT_SERVICES_ENABLED_BOOL" = "true" ]; then
+        start_client_services_alias_proxy
+    fi
     echo "[entrypoint] [${TOTAL_ELAPSED}s] Ready for extensions. Total startup: ${TOTAL_ELAPSED}s"
     touch /tmp/bc-ready
 

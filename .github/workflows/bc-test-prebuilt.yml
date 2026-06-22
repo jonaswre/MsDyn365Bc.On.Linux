@@ -39,14 +39,16 @@ on:
         default: "onprem"
       bc_username:
         description: "NavUserPassword username for OData/API/Dev/WebClient access"
-        required: false
+        required: true
         type: string
-        default: "admin"
       bc_password:
         description: "NavUserPassword password for OData/API/Dev/WebClient access"
-        required: false
+        required: true
         type: string
-        default: "admin"
+      sql_sa_password:
+        description: "SQL Server sa password for the disposable test container"
+        required: true
+        type: string
       app_files:
         description: "Space-separated paths to production .app files (relative to your repo root)"
         required: false
@@ -109,6 +111,14 @@ jobs:
       BC_TYPE: ${{ inputs.bc_type }}
       BC_USERNAME: ${{ inputs.bc_username }}
       BC_PASSWORD: ${{ inputs.bc_password }}
+      SA_PASSWORD: ${{ inputs.sql_sa_password }}
+      BC_INCLUDE_TEST_TOOLKIT: "true"
+      BC_ENABLE_CI_SQL_TUNING: "true"
+      BC_DEV_SERVICES_ENABLED: "true"
+      BC_MANAGEMENT_SERVICES_ENABLED: "true"
+      BC_MANAGEMENT_API_SERVICES_ENABLED: "true"
+      BC_TEST_AUTOMATION_ENABLED: "true"
+      BC_ALLOW_INSECURE_AUTH_BYPASS: "true"
 
     steps:
       - name: Checkout your repo

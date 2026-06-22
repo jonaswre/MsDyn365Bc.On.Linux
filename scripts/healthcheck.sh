@@ -4,6 +4,21 @@ set -euo pipefail
 auth="${BC_USERNAME:-admin}:${BC_PASSWORD:-admin}"
 tenant="${BC_TENANT:-default}"
 
+is_truthy() {
+    case "$(printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+        true|1|yes|y|on) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+enabled() {
+    local name="$1"
+    local default="$2"
+    local value
+    value="${!name:-$default}"
+    is_truthy "$value"
+}
+
 require_success() {
     local label="$1"
     local url="$2"
@@ -65,14 +80,29 @@ require_tcp() {
 
 test -f /tmp/bc-ready
 
-require_tcp "Management" "7045"
-require_tcp "Client Services" "7046"
-require_routed "Management" "http://localhost:7045/BC/Management"
-require_success "Client Services" "http://localhost:7046/BC/client/SignIn"
-require_websocket_upgrade "Client Services" "http://localhost:7046/BC/client/csh"
-require_success "OData" "http://localhost:7048/BC/ODataV4/Company"
-require_success "API" "http://localhost:7052/BC/api/v2.0/companies?tenant=${tenant}"
-require_success "DevServices" "http://localhost:7049/BC/dev/metadata?tenant=${tenant}"
-require_routed "SOAP" "http://localhost:7047/BC/WS/Services"
-require_routed "Management API" "http://localhost:7086/BC/managementApi/v1.0/companies"
-require_routed "WebClient" "http://localhost:7085/BC/client/SignIn"
+if enabled BC_MANAGEMENT_SERVICES_ENABLED false; then
+    require_tcp "Management" "7045"
+    require_routed "Management" "http://localhost:7045/BC/Management"
+fi
+if enabled BC_CLIENT_SERVICES_ENABLED true; then
+    require_tcp "Client Services" "7046"
+    require_routed "Client Services" "http://localhost:7046/BC/client/SignIn"
+    if enabled BC_ALLOW_INSECURE_AUTH_BYPASS false; then
+        require_websocket_upgrade "Client Services" "http://localhost:7046/BC/client/csh"
+    fi
+fi
+if enabled BC_ODATA_SERVICES_ENABLED true; then
+    require_routed "OData" "http://localhost:7048/BC/ODataV4/Company"
+fi
+if enabled BC_API_SERVICES_ENABLED true; then
+    require_routed "API" "http://localhost:7052/BC/api/v2.0/companies?tenant=${tenant}"
+fi
+if enabled BC_DEV_SERVICES_ENABLED false; then
+    require_success "DevServices" "http://localhost:7049/BC/dev/metadata?tenant=${tenant}"
+fi
+if enabled BC_SOAP_SERVICES_ENABLED true; then
+    require_routed "SOAP" "http://localhost:7047/BC/WS/Services"
+fi
+if enabled BC_MANAGEMENT_API_SERVICES_ENABLED false; then
+    require_routed "Management API" "http://localhost:7086/BC/managementApi/v1.0/companies"
+fi

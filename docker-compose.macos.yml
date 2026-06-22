@@ -12,6 +12,6 @@ services:
     # SQL Server 2022 CU18+ crashes under Rosetta 2 emulation; CU17 is the
     # last 2022 CU that works on Apple Silicon (SQL Server 2025 fixes it).
     image: mcr.microsoft.com/mssql/server:2022-CU17-ubuntu-22.04
-    # Rootful podman mounts the tmpfs at /var/opt/mssql/data owned by root,
-    # which the image's non-root mssql user cannot write to.
+    # Rootful podman mounts the SQL data volume owned by root, which the
+    # image's non-root mssql user cannot write to.
     user: "0:0"
