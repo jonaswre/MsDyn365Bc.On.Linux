@@ -8,7 +8,7 @@ Inputs:
   --app-json <path>     Path to a consumer app.json (may be repeated)
   --app-file <path>     Path to a consumer .app file (may be repeated)
   --artifact-dir <path> BC artifact root that contains stock extensions
-                         (e.g. .../artifact-cache/27.5)
+                         (e.g. .../artifact-cache/28.2)
   --extra-ids <list>    Comma-separated GUIDs to always include on top
                          of the baseline + dependency closure (optional)
 
@@ -284,7 +284,7 @@ def main():
     parser.add_argument("--app-file", action="append", default=[],
                         help="Path to a consumer .app file (repeatable)")
     parser.add_argument("--artifact-dir", required=True,
-                        help="BC artifact root (e.g. artifact-cache/27.5)")
+                        help="BC artifact root (e.g. artifact-cache/28.2)")
     parser.add_argument("--extra-ids", default="",
                         help="Comma-separated extra GUIDs to always include")
     args = parser.parse_args()

@@ -9,10 +9,8 @@ of every consumer app.json passed in.
 
 This replaces the older glob-based staging that lived inline in
 bc-test-from-source.yml. The glob approach broke whenever Microsoft
-moved an app to a different folder (e.g. Tests-TestLibraries lives at
-platform/applications/BaseApp/Test/ in BC 27.5, not app/Applications/
-where the old glob looked). Indexing by manifest is robust to those
-moves: an app is found by its declared id no matter where in the
+moved an app to a different folder. Indexing by manifest is robust to
+those moves: an app is found by its declared id no matter where in the
 artifact it sits.
 
 Usage:
@@ -112,7 +110,7 @@ def main() -> int:
     parser.add_argument("--app-json", action="append", default=[], required=True,
                         help="Path to a consumer app.json (repeatable, at least one)")
     parser.add_argument("--artifact-dir", required=True,
-                        help="BC artifact root (e.g. artifact-cache/27.5)")
+                        help="BC artifact root (e.g. artifact-cache/28.2)")
     parser.add_argument("--out-dir", required=True,
                         help="Directory to copy resolved .app files into "
                              "(created if missing; existing files are overwritten)")

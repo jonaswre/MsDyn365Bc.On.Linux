@@ -16,19 +16,23 @@ on:
   workflow_dispatch:
     inputs:
       versions:
-        description: 'BC versions to test (comma-separated, e.g. "27.0,28.1")'
+        description: 'BC 28 versions to test (comma-separated, e.g. "28.1,28.2")'
         required: false
-        default: '27.0,27.1,27.2,27.3,27.4,27.5,28.0,28.1'
+        default: '28.0,28.1,28.2'
         type: string
   push:
     branches: [main, master]
   pull_request:
     branches: [main, master]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
-  # Needed to pull runner_image from GHCR in reusable workflow/test jobs.
-  packages: read
+  # Needed to push the SHA image on branch builds and pull images in test jobs.
+  packages: write
 
 jobs:
   prepare:
@@ -43,10 +47,29 @@ jobs:
         if [ -z "$VERSIONS" ]; then
           # Default matrix when triggered by push/PR (no workflow_dispatch input).
           # Keep in sync with the workflow_dispatch input default above.
-          VERSIONS="27.0,27.1,27.2,27.3,27.4,27.5,28.0,28.1"
+          VERSIONS="28.0,28.1,28.2"
         fi
-        JSON=$(echo "$VERSIONS" | python3 -c "import sys,json; print(json.dumps({'bc_version': sys.stdin.read().strip().split(',')}))")
-        echo "matrix=$JSON" >> $GITHUB_OUTPUT
+        export VERSIONS
+        python3 - <<'PY' >> "$GITHUB_OUTPUT"
+        import json
+        import os
+        import re
+        import sys
+
+        versions = [item.strip() for item in os.environ["VERSIONS"].split(",") if item.strip()]
+        invalid = [version for version in versions if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}|latest", version)]
+        unsupported = [version for version in versions if version != "latest" and not version.startswith("28.")]
+        if not versions:
+            print("No BC versions provided. Use comma-separated BC 28 values like 28.1,28.2.", file=sys.stderr)
+            sys.exit(1)
+        if invalid:
+            print(f"Invalid BC version(s): {', '.join(invalid)}. Expected BC 28 values like 28.1,28.2 or latest.", file=sys.stderr)
+            sys.exit(1)
+        if unsupported:
+            print(f"Unsupported BC version(s): {', '.join(unsupported)}. This workflow supports BC 28 only.", file=sys.stderr)
+            sys.exit(1)
+        print("matrix=" + json.dumps({"bc_version": versions}))
+        PY
 
     - id: alcops
       # Resolve the latest ALCops.Analyzers nupkg URL via the GitHub API.
@@ -70,8 +93,8 @@ jobs:
 
   build-image:
     # Build the bc-runner image from THIS commit as a compile/smoke check,
-    # but never push it from this workflow. test-versions consumes an existing
-    # repository image tag for runtime execution.
+    # then push a SHA tag for branch builds. Pull requests still build without
+    # pushing and consume the current latest image for runtime execution.
     runs-on: ubuntu-latest
     outputs:
       runner_image: ${{ steps.select-image.outputs.runner_image }}
@@ -84,27 +107,31 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Build BC runner image (no push)
+    - name: Log in to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build and push SHA image
       uses: docker/build-push-action@v6
       with:
         context: .
         file: src/Dockerfile
-        push: false
-        # Keep build acceleration without requiring registry push rights.
+        push: true
+        tags: ${{ env.IMAGE }}:${{ github.sha }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
     - id: select-image
       name: Select runner image reference
-      # The build job verifies the current commit still builds successfully.
-      # The matrix/container test jobs intentionally run against the latest
-      # published runner image because this workflow does not push.
-      run: echo "runner_image=${{ env.IMAGE }}:latest" >> "$GITHUB_OUTPUT"
+      run: echo "runner_image=${{ env.IMAGE }}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
-  # ─── Matrix test: each BC version runs through the canonical reusable
-  #     workflow with the smoke test extension. The reusable workflow
-  #     handles BC startup parallelism, AL compile, publish (with
-  #     422-body-checking), test execution, and TESTS_TOTAL > 0 guard.
+  # ─── Matrix validation: each BC version runs through the canonical
+  #     reusable workflow with the smoke test extension. The reusable workflow
+  #     handles BC startup parallelism, AL compile, and publish with
+  #     422-body-checking.
   test:
     needs: [prepare, build-image]
     name: BC ${{ matrix.bc_version }}
@@ -120,23 +147,11 @@ jobs:
       bc_password: BcRunnerTests!23456
       sql_sa_password: BcRunnerSql!23456
       test_app_dirs: extensions/smoke-test
-      # Pipe form deliberately exercises the multi-range parser end-to-end on
-      # the hosted runner so a regression in run-tests.sh's normalization shows
-      # up here. Equivalent to the legacy "70000..70001" but covers the new
-      # code path. See scripts/run-tests.sh CODEUNIT_RANGE handling.
-      codeunit_range: "70000|70001"
-      # test_runner is left at its default ("auto"): each leg probes the
-      # live server's dev endpoint and uses `al runtests` (the AL dotnet
-      # tool's native runner driving the NST's /dev/TestRunnerHub) when
-      # Dev API 7.0+ is advertised — BC 28.0+ — falling back to the
-      # OData+WebSocket runner on older versions. See
-      # scripts/run-tests-altool.py for the altool path's limitations
-      # (no AL test runner codeunit, prerelease-only CLI, etc.).
       # Use the selected repository tag from build-image (latest) because
       # test-versions does not publish images.
       runner_image: ${{ needs.build-image.outputs.runner_image }}
-      # Pin the bc-linux scripts checkout to this commit too, so a test
-      # at SHA X uses entrypoint.sh / run-tests.sh / publish-app.sh /
+      # Pin the runtime scripts checkout to this commit too, so validation
+      # at SHA X uses entrypoint.sh / publish-app.sh /
       # wait-for-bc-healthy.sh from SHA X. Without this we'd test the
       # SHA X image with master scripts.
       runtime_ref: ${{ github.sha }}
@@ -165,16 +180,14 @@ jobs:
       preprocessor_symbols: "SMOKE"
 
   # Exercises the container's own artifact download path (no pre-cached
-  # artifacts). Verifies the in-container download feature and lets us
-  # measure download speed directly. Runs once (BC 28.1) in parallel
-  # with the main matrix. Doesn't fit the reusable workflow pattern
-  # because the reusable workflow always pre-downloads artifacts on
-  # the host.
+  # artifacts) and the no-test-toolkit startup mode in one BC startup.
+  # Doesn't fit the reusable workflow pattern because the reusable workflow
+  # always pre-downloads artifacts on the host.
   test-container-download:
     needs: [build-image]
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    name: Container download test (BC 28.1)
+    name: Container download without test toolkit (BC 28.2)
 
     steps:
     - uses: actions/checkout@v4
@@ -189,12 +202,13 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Start BC (in-container artifact download)
+    - name: Start BC with in-container artifact download and no test toolkit
       # BC_ARTIFACTS_DIR is intentionally NOT set so docker-compose uses a named
       # volume (bc-artifacts) which starts empty — forcing the entrypoint to
       # download artifacts itself. This validates the container download feature.
       env:
-        BC_VERSION: "28.1"
+        BC_VERSION: "28.2"
+        BC_INCLUDE_TEST_TOOLKIT: "false"
         BC_RUNNER_IMAGE: ${{ needs.build-image.outputs.runner_image }}
         BC_USERNAME: bcrunner
         BC_PASSWORD: BcRunnerTests!23456
@@ -212,6 +226,8 @@ jobs:
         ./scripts/wait-for-bc-healthy.sh 30
         ./scripts/verify-network-surface.sh
         ./scripts/verify-sql-persistence.sh
+        docker compose logs bc 2>&1 \
+          | grep -q "BC_INCLUDE_TEST_TOOLKIT=false: skipped test toolkit publishing"
         echo "TOTAL_DURATION=$(($(date +%s) - STEP_START))" >> $GITHUB_ENV
 
     - name: Download timing summary
@@ -221,6 +237,54 @@ jobs:
         docker compose logs bc 2>&1 | grep "\[artifacts\]"
         echo ""
         echo "Total start time (download + DB restore + BC startup): ${TOTAL_DURATION:-n/a}s"
+
+  test-webclient:
+    needs: [build-image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    name: Web client opt-in (BC 28.2)
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set lowercase image name
+      run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/bc-runner" >> $GITHUB_ENV
+
+    - name: Log in to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Start BC with web client
+      env:
+        BC_VERSION: "28.2"
+        BC_WEBCLIENT: "1"
+        BC_RUNNER_IMAGE: ${{ needs.build-image.outputs.runner_image }}
+        BC_USERNAME: bcrunner
+        BC_PASSWORD: BcRunnerTests!23456
+        SA_PASSWORD: BcRunnerSql!23456
+        BC_ENABLE_CI_SQL_TUNING: "true"
+        BC_DEV_SERVICES_ENABLED: "true"
+        BC_MANAGEMENT_SERVICES_ENABLED: "true"
+        BC_MANAGEMENT_API_SERVICES_ENABLED: "true"
+        BC_ALLOW_INSECURE_AUTH_BYPASS: "true"
+      run: |
+        docker compose up -d 2>&1 | tail -10
+        ./scripts/wait-for-bc-healthy.sh 30
+        ./scripts/verify-network-surface.sh
+        docker compose logs bc 2>&1 \
+          | grep -q "BC_WEBCLIENT=1: starting web client"
+        status=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' http://localhost:8080 || true)
+        case "$status" in
+          2*|3*|4*) echo "web client responded with HTTP $status" ;;
+          *) echo "ERROR: web client returned HTTP ${status:-000}"; exit 1 ;;
+        esac
+
+    - name: BC logs
+      if: failure()
+      run: docker compose logs bc 2>&1 | tail -200
 
   # Exercises the macOS compose overlay (docker-compose.macos.yml) on a
   # Linux runner. GitHub-hosted macOS runners cannot run containers at
@@ -236,7 +300,7 @@ jobs:
     needs: [build-image]
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    name: macOS overlay test (BC 28.1)
+    name: macOS overlay test (BC 28.2)
     env:
       COMPOSE_FILE: docker-compose.yml:docker-compose.macos.yml
       BC_USERNAME: bcrunner
@@ -273,7 +337,7 @@ jobs:
 
     - name: Start BC with macOS overlay
       env:
-        BC_VERSION: "28.1"
+        BC_VERSION: "28.2"
         BC_RUNNER_IMAGE: ${{ needs.build-image.outputs.runner_image }}
       run: |
         docker compose up -d 2>&1 | tail -10
@@ -293,3 +357,277 @@ jobs:
     - name: SQL log excerpt
       if: failure()
       run: docker compose logs sql 2>&1 | tail -50
+
+  # Uses Microsoft's official AL development tool as an external bench against
+  # the Linux container. This validates that the standard CI-facing tool can
+  # compile a workspace, publish the resulting app, and execute AL tests
+  # against the container's dev endpoint without any custom runner or
+  # in-container helper.
+  test-official-altool:
+    needs: [build-image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    name: Official AL tool bench (BC 28.2)
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set lowercase image name
+      run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/bc-runner" >> $GITHUB_ENV
+
+    - name: Log in to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Setup .NET 8
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: "8.0.x"
+
+    - name: Install official AL development tool
+      run: |
+        dotnet tool install -g Microsoft.Dynamics.BusinessCentral.Development.Tools \
+          --version "18.0.37.11445-beta" \
+        || dotnet tool update -g Microsoft.Dynamics.BusinessCentral.Development.Tools \
+          --version "18.0.37.11445-beta"
+        echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+        export PATH="$HOME/.dotnet/tools:$PATH"
+        al --version
+        al --help
+        al workspace compile --help
+        al publishapp --help
+        al runtests --help
+        ALTOOL_DLL=$(find "$HOME/.dotnet" "$HOME/.nuget" \
+          -path "*/microsoft.dynamics.businesscentral.development.tools/18.0.37.11445-beta/*/altool.dll" \
+          -type f 2>/dev/null | sort | tail -1)
+        if [ -z "$ALTOOL_DLL" ]; then
+          echo "ERROR: could not locate altool.dll in the official package"
+          exit 1
+        fi
+        echo "ALTOOL_DLL=$ALTOOL_DLL" >> "$GITHUB_ENV"
+        dotnet "$ALTOOL_DLL" --version
+        AL_TOOL_DIR=$(dirname "$ALTOOL_DLL")
+        echo "AL_TOOL_DIR=$AL_TOOL_DIR" >> "$GITHUB_ENV"
+        OFFICIAL_AL_BIN="$RUNNER_TEMP/official-altool-bin"
+        mkdir -p "$OFFICIAL_AL_BIN"
+        cat > "$OFFICIAL_AL_BIN/alc" <<SH
+        #!/usr/bin/env bash
+        exec dotnet "$AL_TOOL_DIR/alc.dll" "\$@"
+        SH
+        chmod +x "$OFFICIAL_AL_BIN/alc"
+        echo "$OFFICIAL_AL_BIN" >> "$GITHUB_PATH"
+        echo "OFFICIAL_AL_BIN=$OFFICIAL_AL_BIN" >> "$GITHUB_ENV"
+        PATH="$OFFICIAL_AL_BIN:$PATH" alc /? | head -5
+
+    - name: Download artifacts, stage symbols, and start BC
+      env:
+        BC_VERSION: "28.2"
+        BC_COUNTRY: "w1"
+        BC_TYPE: "onprem"
+        BC_RUNNER_IMAGE: ${{ needs.build-image.outputs.runner_image }}
+        BC_INCLUDE_TEST_TOOLKIT: "false"
+        BC_ARTIFACTS_DIR: ${{ github.workspace }}/artifact-cache/28.2
+        BC_USERNAME: bcrunner
+        BC_PASSWORD: BcRunnerTests!23456
+        SA_PASSWORD: BcRunnerSql!23456
+        BC_ENABLE_CI_SQL_TUNING: "true"
+        BC_DEV_SERVICES_ENABLED: "true"
+        BC_MANAGEMENT_SERVICES_ENABLED: "true"
+        BC_MANAGEMENT_API_SERVICES_ENABLED: "true"
+        BC_ALLOW_INSECURE_AUTH_BYPASS: "true"
+      run: |
+        set -e
+        mkdir -p "$BC_ARTIFACTS_DIR" official-symbols
+        (
+          ./scripts/download-artifacts.sh "$BC_TYPE" "$BC_VERSION" "$BC_COUNTRY" "$BC_ARTIFACTS_DIR"
+        ) &
+        ARTIFACT_PID=$!
+        (
+          for attempt in 1 2 3 4 5; do
+            if docker compose pull --quiet; then break; fi
+            echo "docker compose pull failed (attempt $attempt/5); retrying in 15s..."
+            sleep 15
+          done
+        ) &
+        PULL_PID=$!
+        wait $ARTIFACT_PID || { echo "artifact download failed"; exit 1; }
+        wait $PULL_PID     || { echo "docker pull failed"; exit 1; }
+
+        PLATFORM_VERSION=$(python3 -c "import json; print(json.load(open('$BC_ARTIFACTS_DIR/app/manifest.json'))['platform'])")
+        PLATFORM_MAJOR_MINOR=$(echo "$PLATFORM_VERSION" | cut -d. -f1,2)
+        RUNTIME_VERSION=$(dotnet "$ALTOOL_DLL" GetLatestSupportedRuntimeVersion "$PLATFORM_MAJOR_MINOR" | tr -d '\r\n')
+        echo "Official AL tool selected runtime $RUNTIME_VERSION for platform $PLATFORM_MAJOR_MINOR"
+        python3 - extensions/minimal-test/app.json "$RUNTIME_VERSION" <<'PY'
+        import json
+        import pathlib
+        import sys
+
+        path = pathlib.Path(sys.argv[1])
+        runtime = sys.argv[2]
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["runtime"] = runtime
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        PY
+
+        python3 scripts/stage-symbols.py \
+          --app-json extensions/minimal-test/app.json \
+          --artifact-dir "$BC_ARTIFACTS_DIR" \
+          --out-dir official-symbols
+        cat > official-altool-smoke.code-workspace <<'JSON'
+        {
+          "folders": [
+            {
+              "name": "Minimal Test",
+              "path": "extensions/minimal-test"
+            }
+          ]
+        }
+        JSON
+
+        docker compose up -d 2>&1 | tail -10
+
+    - name: Seed official AL tool UserPassword cache
+      env:
+        BC_SERVER_USERNAME: bcrunner
+        BC_SERVER_PASSWORD: BcRunnerTests!23456
+      run: |
+        set -e
+        SEED_DIR="$RUNNER_TEMP/altool-userpassword-cache"
+        mkdir -p "$SEED_DIR"
+        cat > "$SEED_DIR/SeedAlToolUserPasswordCache.csproj" <<'XML'
+        <Project Sdk="Microsoft.NET.Sdk">
+          <PropertyGroup>
+            <OutputType>Exe</OutputType>
+            <TargetFramework>net8.0</TargetFramework>
+            <ImplicitUsings>enable</ImplicitUsings>
+            <Nullable>enable</Nullable>
+          </PropertyGroup>
+          <ItemGroup>
+            <FrameworkReference Include="Microsoft.AspNetCore.App" />
+          </ItemGroup>
+        </Project>
+        XML
+        cat > "$SEED_DIR/Program.cs" <<'CS'
+        using System.Reflection;
+        using System.Text;
+        using System.Text.Json;
+        using Microsoft.AspNetCore.DataProtection;
+
+        var toolDir = args[0];
+        var altoolDll = args[1];
+        var server = args[2];
+        var serverInstance = args[3];
+        var username = args[4];
+        var password = args[5];
+
+        var key = $"{server.ToLowerInvariant()}_{serverInstance.ToLowerInvariant()}";
+        var cache = new Dictionary<string, UsernamePassword>
+        {
+            [key] = new(username, password),
+        };
+        var json = JsonSerializer.Serialize(cache);
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var altoolAssemblyName = AssemblyName.GetAssemblyName(altoolDll).FullName
+            ?? throw new InvalidOperationException("Could not read altool assembly name.");
+        var protectorDirectory = Path.Combine(appData, altoolAssemblyName);
+        Directory.CreateDirectory(protectorDirectory);
+        var provider = DataProtectionProvider.Create(new DirectoryInfo(protectorDirectory));
+        var purpose = Uri.EscapeDataString("Microsoft.Dynamics.BusinessCentral.EditorService.Data");
+        var protectedPayload = provider.CreateProtector(purpose).Protect(Encoding.UTF8.GetBytes(json));
+        var cachePath = Path.Combine(toolDir, "UserPasswordCache.dat");
+        File.WriteAllBytes(cachePath, protectedPayload);
+        Console.WriteLine($"Seeded {cachePath} for {key}");
+
+        internal sealed record UsernamePassword(string Username, string Password);
+        CS
+        dotnet run --project "$SEED_DIR" -- \
+          "$AL_TOOL_DIR" \
+          "$ALTOOL_DLL" \
+          "http://localhost" \
+          "BC" \
+          "$BC_SERVER_USERNAME" \
+          "$BC_SERVER_PASSWORD"
+
+    - name: Compile and publish with official AL tool
+      env:
+        BC_USERNAME: bcrunner
+        BC_PASSWORD: BcRunnerTests!23456
+        BC_SERVER_USERNAME: bcrunner
+        BC_SERVER_PASSWORD: BcRunnerTests!23456
+        COLUMNS: 120
+        TERM: xterm
+      run: |
+        set -eo pipefail
+        mkdir -p official-build official-logs
+        dotnet "$ALTOOL_DLL" workspace compile official-altool-smoke.code-workspace \
+          --packagecachepath "$(pwd)/official-symbols" \
+          --outfolder "$(pwd)/official-build" \
+          --maxcpucount 1 \
+          --define OFFICIAL_AL_TOOL_BENCH \
+          --logdirectory "$(pwd)/official-logs"
+
+        APP=$(find official-build -type f -name '*.app' | sort | head -1)
+        if [ -z "$APP" ]; then
+          echo "ERROR: official AL tool did not produce an app package"
+          find official-build -maxdepth 3 -type f -print
+          exit 1
+        fi
+        echo "Official AL tool built: $APP"
+        dotnet "$ALTOOL_DLL" GetPackageManifest "$APP"
+
+        ./scripts/wait-for-bc-healthy.sh 30
+        ./scripts/verify-network-surface.sh
+        dotnet "$ALTOOL_DLL" publishapp "$APP" \
+          --server "http://localhost" \
+          --serverInstance "BC" \
+          --port 7049 \
+          --environmentType "OnPrem" \
+          --authentication "UserPassword" \
+          --schemaUpdateMode "ForceSync"
+        dotnet "$ALTOOL_DLL" runtests 99800 \
+          --server "http://localhost" \
+          --serverinstance "BC" \
+          --port 7049 \
+          --environmenttype "OnPrem" \
+          --authentication "UserPassword" \
+          | tee official-test-results.log
+        grep -q "Test run completed: 3 passed, 0 failed, 0 skipped." official-test-results.log
+        grep -q "PASS AdditionWorks" official-test-results.log
+        grep -q "PASS MultiplicationWorks" official-test-results.log
+
+    - name: Official AL tool bench diagnostics
+      if: failure()
+      run: |
+        echo "=== official AL tool logs ==="
+        find official-logs -type f -maxdepth 2 -print -exec sed -n '1,160p' {} \; || true
+        echo "=== official AL tool test results ==="
+        cat official-test-results.log || true
+        echo "=== BC logs ==="
+        docker compose logs bc 2>&1 | tail -200 || true
+
+  publish-latest:
+    needs: [test, test-container-download, test-webclient, test-macos-overlay, test-official-altool]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Set lowercase image name
+      run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')/bc-runner" >> $GITHUB_ENV
+
+    - name: Log in to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Promote validated SHA image to latest
+      run: |
+        docker buildx imagetools create \
+          -t "${IMAGE}:latest" \
+          "${IMAGE}:${{ github.sha }}"

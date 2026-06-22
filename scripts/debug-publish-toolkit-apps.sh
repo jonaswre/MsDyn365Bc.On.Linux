@@ -42,6 +42,7 @@ aliases = {
         "Any",
         "System Application Test Library",
         "Business Foundation Test Libraries",
+        "Application Test Library",
         "Tests-TestLibraries",
     ],
 }

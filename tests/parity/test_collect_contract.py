@@ -115,7 +115,7 @@ class CollectContractTests(unittest.TestCase):
             "displayName": "Application",
             "appId": "stable-app-id",
             "packageId": "environment-package-id",
-            "appVersion": "27.5.0.0",
+                    "appVersion": "28.2.0.0",
         }
 
         self.assertEqual(
@@ -123,7 +123,7 @@ class CollectContractTests(unittest.TestCase):
                 "publisher": "Microsoft",
                 "name": "Application",
                 "id": "stable-app-id",
-                "version": "27.5.0.0",
+                "version": "28.2.0.0",
             },
             normalize_extension(extension),
         )
@@ -638,7 +638,7 @@ class CollectContractTests(unittest.TestCase):
         self.assertEqual(["POST", "PATCH", "DELETE"], [call[0] for call in calls])
 
     def test_customer_crud_probe_attempts_cleanup_after_update_failure(self):
-        args = SimpleNamespace(api_url="http://localhost:7052/BC/api/v2.0", auth="admin:admin", bc_version="27.5")
+        args = SimpleNamespace(api_url="http://localhost:7052/BC/api/v2.0", auth="admin:admin", bc_version="28.2")
         calls = []
 
         def fake_request_json(method, url, auth, payload=None, headers=None, timeout=15):

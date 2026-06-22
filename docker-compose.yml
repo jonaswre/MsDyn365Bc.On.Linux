@@ -35,7 +35,7 @@ services:
     build:
       context: .
       dockerfile: src/Dockerfile
-    mem_limit: ${BC_MEMORY_LIMIT:-8G}
+    mem_limit: ${BC_MEMORY_LIMIT:-12G}
     dns: ${BC_DNS:-}
     stdin_open: true
     depends_on:
@@ -70,7 +70,7 @@ services:
       BC_MANAGEMENT_API_SERVICES_ENABLED: ${BC_MANAGEMENT_API_SERVICES_ENABLED:-false}
       BC_TEST_AUTOMATION_ENABLED: ${BC_TEST_AUTOMATION_ENABLED:-false}
       BC_ALLOW_INSECURE_AUTH_BYPASS: ${BC_ALLOW_INSECURE_AUTH_BYPASS:-false}
-      BC_MEMORY_LIMIT: ${BC_MEMORY_LIMIT:-8G}
+      BC_MEMORY_LIMIT: ${BC_MEMORY_LIMIT:-12G}
       BC_DNS: ${BC_DNS:-}
       BC_API_REQUEST_LIMIT: ${BC_API_REQUEST_LIMIT:-50}
       SA_PASSWORD: ${SA_PASSWORD:?Set SA_PASSWORD to a non-default SQL sa password}

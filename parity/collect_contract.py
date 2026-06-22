@@ -14,7 +14,7 @@ from urllib import error, parse, request
 
 
 LAST_FETCH_ERRORS: dict[str, str] = {}
-RUNNER_KINDS = ("websocket", "bccontainerhelper", "startup-debug")
+RUNNER_KINDS = ("websocket", "bccontainerhelper", "startup-debug", "altool")
 HTTP_ERROR_BODY_LIMIT = 800
 HTTP_TEXT_BODY_LIMIT = 65536
 ERROR_BODY_EXCERPT_LIMIT = 240

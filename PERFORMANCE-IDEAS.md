@@ -38,7 +38,7 @@ not network latency. **Docker bridge is fine.**
 
 Hypothesis: Server GC reduces pause frequency, improving throughput.
 Historical result: an older build broke the API endpoint when Server GC was
-enabled. Current BC 27/28 Linux images run with `DOTNET_gcServer=1` and the
+enabled. Current BC 28 Linux images run with `DOTNET_gcServer=1` and the
 network API surface on port 7048 is part of the supported test path, so treat
 this experiment as superseded unless you are reproducing that older image.
 

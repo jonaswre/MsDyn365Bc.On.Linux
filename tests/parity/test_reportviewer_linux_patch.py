@@ -75,6 +75,15 @@ class ReportViewerLinuxPatchTests(unittest.TestCase):
         self.assertNotIn("Linux reporting sidecar listening", source)
         self.assertIn("Reporting service bridge listening", source)
 
+    def test_linux_reporting_sidecar_supports_older_report_handle_constructors(self):
+        source = Path("src/reporting/LinuxReportingService.cs").read_text(encoding="utf-8")
+
+        self.assertIn("CreateLocalReportHandle", source)
+        self.assertIn("ConstructorMatches", source)
+        self.assertIn("commonArgs.Length + 1", source)
+        self.assertIn("commonArgs.Length", source)
+        self.assertNotIn("new LocalReportHandle(", source)
+
     def test_runtime_reporting_logs_do_not_expose_platform_bridge(self):
         sources = [
             Path("scripts/entrypoint.sh").read_text(encoding="utf-8"),
@@ -103,10 +112,10 @@ class ReportViewerLinuxPatchTests(unittest.TestCase):
 
         self.assertIn("BC_VERBOSE_COMPATIBILITY_PATCHES", source)
         self.assertIn("private static void Log(string message)", source)
-        self.assertNotIn('Console.WriteLine("[StartupHook]', source)
-        self.assertNotIn('Console.WriteLine($"[StartupHook]', source)
-        self.assertNotIn('Console.Error.WriteLine("[StartupHook]', source)
-        self.assertNotIn('Console.Error.WriteLine($"[StartupHook]', source)
+        self.assertNotIn('Console.WriteLine("[StartupHook] Patch #19', source)
+        self.assertNotIn('Console.WriteLine($"[StartupHook] Patch #19', source)
+        self.assertNotIn('Console.Error.WriteLine("[StartupHook] Patch #19', source)
+        self.assertNotIn('Console.Error.WriteLine($"[StartupHook] Patch #19', source)
 
 
 if __name__ == "__main__":

@@ -48,7 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fc-cache -f && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /bc/hook /bc/patched /bc/refasm /bc/addins-overlay /bc/testrunner /bc/service /bc/artifacts /bc/scripts /bc/tools /bc/reporting /bc/native
+RUN mkdir -p /bc/hook /bc/patched /bc/refasm /bc/addins-overlay /bc/service /bc/artifacts /bc/scripts /bc/tools /bc/reporting /bc/native
 
 # Copy built artifacts from builder
 COPY --from=builder /build/output/hook/ /bc/hook/
@@ -59,15 +59,11 @@ COPY --from=builder /build/output/DrawingStub.dll /bc/addins-overlay/System.Draw
 
 # Copy scripts
 COPY scripts/ /bc/scripts/
-RUN chmod +x /bc/scripts/*.sh
+RUN chmod +x /bc/scripts/*.sh /bc/scripts/*.py
 
 # Copy reporting bridge source. It is compiled after BC artifacts are downloaded
 # because it references version-matched Microsoft reporting assemblies.
 COPY src/reporting/LinuxReportingService.cs /bc/reporting/ReportingServiceBridge.cs
-
-# Copy test runner extension (REST API for test execution)
-COPY extensions/TestRunnerExtension/MicrosoftTestRunnerPatched.app /bc/testrunner/MicrosoftTestRunnerPatched.app
-COPY extensions/TestRunnerExtension/TestRunnerExtension.app /bc/testrunner/TestRunner.app
 
 # Copy SideService stubs (Linux replacements for Windows PE executables)
 COPY stubs/reporting-service-stub /bc/stubs/reporting-service-stub

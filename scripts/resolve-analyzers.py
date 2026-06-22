@@ -65,7 +65,7 @@ from pathlib import Path
 # ── Microsoft cop DLL filenames ──────────────────────────────────────────
 # These ship inside the Linux AL compiler tool at
 # tools/net8.0/any/. Verified empirically against
-# Microsoft.Dynamics.BusinessCentral.Development.Tools.Linux 16.2.28.57946.
+# Microsoft.Dynamics.BusinessCentral.Development.Tools.Linux 17.0.34.45391.
 MS_COPS = {
     "code_cop": "Microsoft.Dynamics.Nav.CodeCop.dll",
     "ui_cop": "Microsoft.Dynamics.Nav.UICop.dll",

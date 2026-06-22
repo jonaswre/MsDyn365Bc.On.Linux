@@ -19,6 +19,18 @@ _ms() { date +%s%3N; }
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 EXTRACT_ZIP="$SCRIPT_DIR/extract-zip-normalized.py"
 
+unzip_allow_warnings() {
+    local status
+    set +e
+    unzip "$@"
+    status=$?
+    set -e
+    if [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; then
+        return 0
+    fi
+    return "$status"
+}
+
 # Parse arguments: either (url, dest) or (type, version, country, dest)
 if [ $# -eq 2 ]; then
     APP_URL="$1"
@@ -29,8 +41,8 @@ elif [ $# -eq 4 ]; then
     BC_TYPE="$1"; BC_VERSION="$2"; BC_COUNTRY="$3"; DEST="$4"
     BASE_URL="https://bcartifacts-exdbf9fwegejdqak.b02.azurefd.net"
 
-    # Resolve "latest" or a short version (e.g. "27.5") to a full version
-    # (e.g. "27.5.46862.48612")
+    # Resolve "latest" or a short version (e.g. "28.2") to a full version
+    # (e.g. "28.2.51034.50938")
     # using the per-country JSON index file that Microsoft maintains for
     # navcontainerhelper:
     #
@@ -41,10 +53,10 @@ elif [ $# -eq 4 ]; then
     # JSON object, NOT the list-blobs API. Avoids the AFD list-blobs cache
     # poisoning that plagued earlier versions of this script
     # (microsoft/navcontainerhelper#4119), which would intermittently return
-    # stale 27.0/27.1/27.2 entries when asked for prefix=27.5.
+    # stale entries when asked for a specific major.minor prefix.
     #
     # To skip the resolver entirely, pass a fully-qualified version like
-    # "27.5.46862.48612" via BC_VERSION — the regex below sees three parts
+    # "28.2.51034.50938" via BC_VERSION — the regex below sees three parts
     # and goes straight to the download.
     if ! echo "$BC_VERSION" | grep -qP '^\d+\.\d+\.\d+'; then
         REQUESTED_VERSION="$BC_VERSION"
@@ -101,7 +113,7 @@ print(versions[-1])
         if [ -z "$RESOLVED" ]; then
             echo "[artifacts] ERROR: Could not resolve version $REQUESTED_VERSION from $INDEX_URL"
             echo "[artifacts] Workaround: pin BC_VERSION to a fully-qualified version, e.g.:"
-            echo "[artifacts]   BC_VERSION=27.5.46862.48612 docker compose up -d --wait"
+            echo "[artifacts]   BC_VERSION=28.2.51034.50938 docker compose up -d --wait"
             exit 1
         fi
         echo "[artifacts] Resolved: $REQUESTED_VERSION → $RESOLVED ($(( $(_ms) - T_RESOLVE ))ms)"

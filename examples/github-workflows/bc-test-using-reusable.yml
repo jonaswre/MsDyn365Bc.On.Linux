@@ -1,4 +1,4 @@
-name: BC Tests
+name: BC Container Publish
 
 # Tiny consumer workflow that delegates to a reusable workflow hosted in
 # jonaswre/MsDyn365Bc.On.Linux. Copy this file into your repo at
@@ -30,11 +30,6 @@ jobs:
       sql_sa_password: ${{ secrets.BC_SQL_SA_PASSWORD }}
       app_dirs:       "app"          # space-separated dirs containing app.json
       test_app_dirs:  "test"         # ditto for test apps
-      # codeunit_range accepts:
-      #   "50000..99999"                  single AL range
-      #   "50000..50100|130450..130459"   multiple ranges (pipe-separated)
-      #   "50000,50001,50002"             explicit ids
-      codeunit_range: "50000..99999"
 
       # ─── Optional: analyzers + rulesets ─────────────────────────────
       # All off by default. Uncomment to enable. The reusable workflow
@@ -91,8 +86,6 @@ jobs:
   #     bc_password:    ${{ secrets.BC_PASSWORD }}
   #     sql_sa_password: ${{ secrets.BC_SQL_SA_PASSWORD }}
   #     test_app_files: "tests/MyTests.app"
-  #     # See above for the accepted codeunit_range formats.
-  #     codeunit_range: "50000..99999"
   #   # Same optional license pattern as above:
   #   # secrets:
   #   #   bc_license: ${{ secrets.BC_LICENSE }}

@@ -73,9 +73,8 @@ browser ──HTTP/WS (/csh, JSON-RPC)──▶ Prod.Client.WebCoreApp (Kestrel,
   patches that assume the NST process (encryption provider swaps, side
   services, Cecil compiler fixes).
 - The web-server↔NST channel needs nothing new: the NST's client services
-  already run over Kestrel on 7085 via the HttpSys stub (exercised daily by
-  `run-tests.sh`), and the web client connects to it out of the box with
-  `ClientServicesCredentialType=NavUserPassword`.
+  already run over Kestrel on 7085 via the HttpSys stub, and the web client
+  connects to it out of the box with `ClientServicesCredentialType=NavUserPassword`.
 
 ## What start-webclient.sh configures (and why)
 

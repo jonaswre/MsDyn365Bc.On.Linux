@@ -75,15 +75,7 @@ public sealed class ReportingServiceBridge : ReportingService.ReportingServiceBa
                 UICulture = CultureInfo.GetCultureInfo(renderingContext.UiCulture),
                 Timezone = TimeZoneInfo.FromSerializedString(renderingContext.Timezone)
             };
-            using (var report = new LocalReportHandle(
-                renderingContext.ReportId,
-                layout,
-                renderingContext.EnableExternalImages,
-                renderingContext.EnableHyperlinks,
-                renderingContext.EnableExternalAssemblies,
-                settings.EnableAppDomainIsolation,
-                enableAppDomainMonitor: false,
-                localizationSettings: localization))
+            using (var report = CreateLocalReportHandle(renderingContext, layout, settings, localization))
             {
                 AttachCurrentDomainProxy(report, layout, renderingContext);
                 report.AddDataSource(
@@ -201,6 +193,60 @@ public sealed class ReportingServiceBridge : ReportingService.ReportingServiceBa
     private static Result OkResult()
     {
         return new Result { Ok = new Result.Types.Ok() };
+    }
+
+    private static LocalReportHandle CreateLocalReportHandle(
+        RenderingContext context,
+        byte[] layout,
+        ReportingServiceSettings settings,
+        ILocalReportHandle.RenderLocalizationSettings localization)
+    {
+        ConstructorInfo[] constructors = typeof(LocalReportHandle)
+            .GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        object[] commonArgs =
+        {
+            context.ReportId,
+            layout,
+            context.EnableExternalImages,
+            context.EnableHyperlinks,
+            context.EnableExternalAssemblies,
+            settings.EnableAppDomainIsolation,
+            false
+        };
+
+        ConstructorInfo withLocalization = constructors
+            .FirstOrDefault(c => ConstructorMatches(c, commonArgs.Length + 1));
+        if (withLocalization != null)
+        {
+            object[] args = commonArgs.Concat(new object[] { localization }).ToArray();
+            return (LocalReportHandle)withLocalization.Invoke(args);
+        }
+
+        ConstructorInfo withoutLocalization = constructors
+            .FirstOrDefault(c => ConstructorMatches(c, commonArgs.Length));
+        if (withoutLocalization != null)
+            return (LocalReportHandle)withoutLocalization.Invoke(commonArgs);
+
+        string signatures = string.Join(
+            "; ",
+            constructors.Select(c => "(" + string.Join(", ", c.GetParameters().Select(p => p.ParameterType.FullName)) + ")"));
+        throw new MissingMethodException(
+            "No supported LocalReportHandle constructor was found. Available constructors: " + signatures);
+    }
+
+    private static bool ConstructorMatches(ConstructorInfo constructor, int parameterCount)
+    {
+        ParameterInfo[] parameters = constructor.GetParameters();
+        if (parameters.Length != parameterCount)
+            return false;
+        return parameters.Length >= 7
+            && parameters[0].ParameterType == typeof(int)
+            && parameters[1].ParameterType == typeof(byte[])
+            && parameters[2].ParameterType == typeof(bool)
+            && parameters[3].ParameterType == typeof(bool)
+            && parameters[4].ParameterType == typeof(bool)
+            && parameters[5].ParameterType == typeof(bool)
+            && parameters[6].ParameterType == typeof(bool);
     }
 
     private static string BuildDeviceInfo(RenderingContext context, LocalReportHandle report)

@@ -13,6 +13,18 @@ class ParityWorkflowTests(unittest.TestCase):
         path = Path(".github/workflows/build-image.yml")
         return yaml.safe_load(path.read_text(encoding="utf-8"))
 
+    def versions_workflow(self):
+        path = Path(".github/workflows/test-versions.yml")
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+    def bc_test_from_source_workflow(self):
+        path = Path(".github/workflows/bc-test-from-source.yml")
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+    def bc_test_prebuilt_workflow(self):
+        path = Path(".github/workflows/bc-test-prebuilt.yml")
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
+
     def linux_contract_job(self):
         return self.workflow()["jobs"]["linux-contract"]
 
@@ -28,7 +40,7 @@ class ParityWorkflowTests(unittest.TestCase):
         env = self.linux_contract_job()["env"]
 
         self.assertEqual("false", env["BC_CLEAR_ALL_APPS"])
-        self.assertEqual("false", env["BC_INCLUDE_TEST_TOOLKIT"])
+        self.assertEqual("true", env["BC_INCLUDE_TEST_TOOLKIT"])
 
     def test_windows_contract_uses_test_runner_only(self):
         script = Path("parity/collect-windows-contract.ps1").read_text(encoding="utf-8")
@@ -106,6 +118,127 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertNotIn("DOTNET_GCHeapCount", env)
         self.assertNotIn("DOTNET_GCNoAffinitize", env)
 
+    def test_test_versions_defaults_to_bc28_only(self):
+        workflow = self.versions_workflow()
+        versions = workflow[True]["workflow_dispatch"]["inputs"]["versions"]["default"]
+        prepare_script = workflow["jobs"]["prepare"]["steps"][0]["run"]
+
+        self.assertEqual("28.0,28.1,28.2", versions)
+        self.assertNotIn("27.", versions)
+        self.assertIn("This workflow supports BC 28 only", prepare_script)
+
+    def test_test_versions_has_bc28_container_capability_jobs(self):
+        workflow = self.versions_workflow()
+        webclient = workflow["jobs"]["test-webclient"]
+        container_download = workflow["jobs"]["test-container-download"]
+        macos = workflow["jobs"]["test-macos-overlay"]
+        official = workflow["jobs"]["test-official-altool"]
+        scripts = "\n".join(
+            step.get("run", "")
+            for job in (webclient, container_download, macos, official)
+            for step in job["steps"]
+        )
+        container_download_start = None
+        for step in container_download["steps"]:
+            if step.get("name") == "Start BC with in-container artifact download and no test toolkit":
+                container_download_start = step
+                break
+        self.assertIsNotNone(container_download_start)
+        webclient_start = next(step for step in webclient["steps"] if step.get("name") == "Start BC with web client")
+
+        self.assertNotIn("test-no-test-toolkit", workflow["jobs"])
+        self.assertEqual("Web client opt-in (BC 28.2)", webclient["name"])
+        self.assertEqual("Container download without test toolkit (BC 28.2)", container_download["name"])
+        self.assertEqual("macOS overlay test (BC 28.2)", macos["name"])
+        self.assertEqual("Official AL tool bench (BC 28.2)", official["name"])
+        self.assertEqual("false", container_download_start["env"]["BC_INCLUDE_TEST_TOOLKIT"])
+        self.assertEqual("1", webclient_start["env"]["BC_WEBCLIENT"])
+        self.assertIn("BC_INCLUDE_TEST_TOOLKIT=false: skipped test toolkit publishing", scripts)
+        self.assertIn("BC_WEBCLIENT=1: starting web client", scripts)
+        self.assertIn("Microsoft.Dynamics.BusinessCentral.Development.Tools", scripts)
+        self.assertIn("18.0.37.11445-beta", scripts)
+        self.assertIn("al workspace compile", scripts)
+        self.assertIn("al publishapp", scripts)
+        self.assertIn("al runtests", scripts)
+        self.assertIn("ALTOOL_DLL", scripts)
+        self.assertIn("AL_TOOL_DIR", scripts)
+        self.assertIn("OFFICIAL_AL_BIN", scripts)
+        self.assertIn("alc.dll", scripts)
+        self.assertIn("Seed official AL tool UserPassword cache", str(official))
+        self.assertIn("UserPasswordCache.dat", scripts)
+        self.assertIn("DataProtectionProvider.Create", scripts)
+        self.assertIn("AssemblyName.GetAssemblyName", scripts)
+        compile_step = next(
+            step
+            for step in official["steps"]
+            if step.get("name") == "Compile and publish with official AL tool"
+        )
+        self.assertEqual(120, compile_step["env"]["COLUMNS"])
+        self.assertEqual("xterm", compile_step["env"]["TERM"])
+        self.assertIn("set -eo pipefail", compile_step["run"])
+        self.assertIn('dotnet "$ALTOOL_DLL" workspace compile', scripts)
+        self.assertIn('dotnet "$ALTOOL_DLL" publishapp', scripts)
+        self.assertIn('dotnet "$ALTOOL_DLL" runtests 99800', scripts)
+        self.assertIn("Test run completed: 3 passed, 0 failed, 0 skipped.", scripts)
+        self.assertIn("PASS AdditionWorks", scripts)
+        self.assertIn("PASS MultiplicationWorks", scripts)
+        self.assertNotIn('BC_VERSION: "27.', str(workflow["jobs"]))
+
+    def test_primary_workflows_cancel_stale_runs(self):
+        for workflow in (
+            self.versions_workflow(),
+            self.build_image_workflow(),
+            self.workflow(),
+        ):
+            concurrency = workflow["concurrency"]
+            self.assertEqual("${{ github.workflow }}-${{ github.ref }}", concurrency["group"])
+            self.assertTrue(concurrency["cancel-in-progress"])
+
+    def test_test_versions_uses_current_sha_image_on_push(self):
+        workflow = self.versions_workflow()
+        job = workflow["jobs"]["build-image"]
+        steps = job["steps"]
+        push_step = next(step for step in steps if step.get("name") == "Build and push SHA image")
+        select_step = next(step for step in steps if step.get("id") == "select-image")
+        test_job = workflow["jobs"]["test"]
+
+        self.assertEqual("write", workflow["permissions"]["packages"])
+        self.assertEqual("${{ steps.select-image.outputs.runner_image }}", job["outputs"]["runner_image"])
+        self.assertNotIn("if", push_step)
+        self.assertTrue(push_step["with"]["push"])
+        self.assertIn("${{ env.IMAGE }}:${{ github.sha }}", push_step["with"]["tags"])
+        self.assertIn("runner_image=${{ env.IMAGE }}:${{ github.sha }}", select_step["run"])
+        self.assertNotIn(":latest", select_step["run"])
+        self.assertEqual("${{ needs.build-image.outputs.runner_image }}", test_job["with"]["runner_image"])
+
+    def test_test_versions_promotes_latest_after_validation(self):
+        workflow = self.versions_workflow()
+        promote = workflow["jobs"]["publish-latest"]
+
+        self.assertEqual(
+            ["test", "test-container-download", "test-webclient", "test-macos-overlay", "test-official-altool"],
+            promote["needs"],
+        )
+        self.assertIn("github.event_name != 'pull_request'", promote["if"])
+        script = "\n".join(step.get("run", "") for step in promote["steps"])
+        self.assertIn("docker buildx imagetools create", script)
+        self.assertIn("${IMAGE}:${{ github.sha }}", script)
+        self.assertIn("${IMAGE}:latest", script)
+
+    def test_parity_workflow_defaults_to_bc28_only(self):
+        workflow = self.workflow()
+        versions = workflow[True]["workflow_dispatch"]["inputs"]["versions"]["default"]
+        prepare_script = workflow["jobs"]["prepare"]["steps"][0]["run"]
+        build_script = "\n".join(
+            step.get("run", "")
+            for step in workflow["jobs"]["build-smoke-app"]["steps"]
+        )
+
+        self.assertEqual("28.1,28.2", versions)
+        self.assertNotIn("27.", versions)
+        self.assertNotIn("27) AL_TOOL=", build_script)
+        self.assertIn("This parity workflow supports BC 28 only", prepare_script)
+
     def test_build_job_uploads_keep_app_ids_for_linux_startup(self):
         steps = self.workflow()["jobs"]["build-smoke-app"]["steps"]
         script = "\n".join(step.get("run", "") for step in steps)
@@ -113,10 +246,8 @@ class ParityWorkflowTests(unittest.TestCase):
 
         self.assertIn("scripts/resolve-keep-app-ids.py", script)
         self.assertIn("--app-json extensions/smoke-test/app.json", script)
-        self.assertIn("--app-json extensions/TestRunnerExtension/app.json", script)
-        self.assertIn("--app-file \"patched-test-runner-$BC_VERSION.app\"", script)
-        self.assertIn("--app-file \"test-runner-extension-$BC_VERSION.app\"", script)
-        self.assertIn("ids.discard(test_runner_id)", script)
+        self.assertNotIn("extensions/TestRunnerExtension", script)
+        self.assertNotIn("patched-test-runner", script)
         self.assertIn("keep-app-ids-${{ matrix.bc_version }}.txt", upload["with"]["path"])
 
     def test_build_job_keeps_microsoft_automation_api_v2_app(self):
@@ -126,23 +257,22 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn("AUTOMATION_API_V2_APP_ID=10cb69d9-bc8a-4d27-970a-9e110e9db2a5", script)
         self.assertIn("--extra-ids \"$AUTOMATION_API_V2_APP_ID\"", script)
 
-    def test_build_job_uploads_version_matched_test_runner_extension(self):
+    def test_build_job_does_not_upload_custom_test_runner_extension(self):
         steps = self.workflow()["jobs"]["build-smoke-app"]["steps"]
         script = "\n".join(step.get("run", "") for step in steps)
         upload = next(step for step in steps if step.get("uses") == "actions/upload-artifact@v4")
 
-        self.assertIn("extensions/TestRunnerExtension/.alpackages", script)
-        self.assertIn("patched-test-runner-$BC_VERSION.app", script)
-        self.assertIn("/project:extensions/TestRunnerExtension", script)
-        self.assertIn("/out:test-runner-extension-$BC_VERSION.app", script)
-        self.assertIn("test-runner-extension-${{ matrix.bc_version }}.app", upload["with"]["path"])
+        self.assertNotIn("extensions/TestRunnerExtension", script)
+        self.assertNotIn("patched-test-runner", script)
+        self.assertNotIn("test-runner-extension-${{ matrix.bc_version }}.app", upload["with"]["path"])
 
-    def test_linux_contract_uses_version_matched_test_runner_extension(self):
+    def test_linux_contract_does_not_use_custom_test_runner_extension(self):
         steps = self.linux_contract_job()["steps"]
         collect = next(step for step in steps if step.get("name") == "Collect Linux contract")
         script = collect["run"]
 
-        self.assertIn("build/test-runner-extension-$BC_VERSION.app", script)
+        self.assertNotIn("TestRunnerExtension", script)
+        self.assertNotIn("patched-test-runner", script)
 
     def test_linux_entrypoint_does_not_seed_visible_service_user(self):
         script = Path("scripts/entrypoint.sh").read_text(encoding="utf-8")
@@ -246,27 +376,64 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn("keep-app-ids-$BC_VERSION.txt", prior_scripts)
         self.assertIn("$GITHUB_ENV", prior_scripts)
 
-    def test_linux_contract_publishes_only_smoke_test_runner_dependency(self):
+    def test_linux_contract_uses_standard_al_tooling_when_available(self):
         script = Path("parity/collect-linux-contract.sh").read_text(encoding="utf-8")
 
-        self.assertIn("patched_test_runner_app", script)
-        self.assertIn("Publishing version-matched patched Microsoft Test Runner", script)
+        self.assertIn("run-tests-altool.py", script)
+        self.assertIn("Publishing smoke test app", script)
+        self.assertNotIn("patched_test_runner_app", script)
         self.assertNotIn("load_artifact_apps", script)
         self.assertNotIn("Business Foundation Test Libraries", script)
 
-    def test_linux_contract_records_test_runner_setup_failure_as_contract_data(self):
+    def test_linux_contract_records_smoke_app_publish_failure_as_contract_data(self):
         script = Path("parity/collect-linux-contract.sh").read_text(encoding="utf-8")
 
-        self.assertIn("tests.runnerSetup=patched Microsoft Test Runner publish failed", script)
+        self.assertIn("tests.runnerSetup=smoke app publish failed", script)
         self.assertIn("total=0 passed=0 failed=1 skipped=0", script)
         self.assertIn("exit 0", script)
 
-    def test_run_tests_uses_api_port_candidate_before_custom_api_exists(self):
-        script = Path("scripts/run-tests.sh").read_text(encoding="utf-8")
+    def test_custom_run_tests_script_is_not_shipped(self):
+        self.assertFalse(Path("scripts/run-tests.sh").exists())
 
-        self.assertIn('API_PORT_BASE="$(derive_api_base_candidates | sed -n', script)
-        self.assertIn('[ -z "$API_PORT_BASE" ] && API_PORT_BASE="$BASE_URL"', script)
-        self.assertIn("TestRunner API not available at ${API_BASE}/codeunitRunRequests", script)
+    def test_reusable_workflow_uses_runtime_checkout_for_standard_test_helpers(self):
+        steps = self.bc_test_from_source_workflow()["jobs"]["test"]["steps"]
+        test_step = next(step for step in steps if step.get("name") == "Run AL tests with standard tooling")
+        script = test_step["run"]
+
+        self.assertIn('ALTOOL_TEST_SCRIPT="bc-runtime/scripts/run-tests-altool.py"', script)
+        self.assertIn('SUMMARY_SCRIPT="bc-runtime/scripts/workflow-summary.sh"', script)
+        self.assertIn('python3 "$ALTOOL_TEST_SCRIPT" --probe', script)
+        self.assertIn('python3 "$ALTOOL_TEST_SCRIPT" \\', script)
+        self.assertIn('bash "$SUMMARY_SCRIPT" begin TESTS', script)
+        self.assertNotIn("python3 scripts/run-tests-altool.py", script)
+        self.assertNotIn("bash scripts/workflow-summary.sh", script)
+
+    def test_reusable_workflows_login_to_ghcr_before_pull(self):
+        for workflow in (
+            self.bc_test_from_source_workflow(),
+            self.bc_test_prebuilt_workflow(),
+        ):
+            self.assertEqual("read", workflow["permissions"]["packages"])
+            steps = workflow["jobs"]["test"]["steps"]
+            names = [step.get("name") for step in steps]
+            login = next(step for step in steps if step.get("name") == "Log in to GHCR")
+
+            self.assertLess(names.index("Log in to GHCR"), names.index("Download BC artifacts + pull docker images (parallel)"))
+            self.assertEqual("docker/login-action@v3", login["uses"])
+            self.assertEqual("ghcr.io", login["with"]["registry"])
+            self.assertEqual("${{ github.token }}", login["with"]["password"])
+
+    def test_reusable_workflows_require_explicit_credentials(self):
+        for workflow in (
+            self.bc_test_from_source_workflow(),
+            self.bc_test_prebuilt_workflow(),
+        ):
+            inputs = workflow[True]["workflow_call"]["inputs"]
+            for name in ("bc_username", "bc_password", "sql_sa_password"):
+                with self.subTest(workflow=workflow["name"], input=name):
+                    self.assertTrue(inputs[name]["required"])
+                    self.assertNotIn("default", inputs[name])
+
 
     def test_linux_diagnostics_are_captured_after_contract_collection(self):
         names = self.step_names()
@@ -280,12 +447,12 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertIn("docker inspect \"$(docker compose ps -q bc)\"", diagnostics["run"])
         self.assertIn("bc-inspect.json", diagnostics["run"])
 
-    def test_build_job_uploads_version_matched_patched_test_runner(self):
+    def test_build_job_does_not_build_patched_test_runner(self):
         steps = self.workflow()["jobs"]["build-smoke-app"]["steps"]
         script = "\n".join(step.get("run", "") for step in steps)
 
-        self.assertIn("scripts/build-patched-test-runner.sh", script)
-        self.assertIn("patched-test-runner-$BC_VERSION.app", script)
+        self.assertNotIn("scripts/build-patched-test-runner.sh", script)
+        self.assertNotIn("patched-test-runner-$BC_VERSION.app", script)
 
     def test_build_job_retries_al_compiler_download(self):
         steps = self.workflow()["jobs"]["build-smoke-app"]["steps"]
@@ -317,10 +484,11 @@ class ParityWorkflowTests(unittest.TestCase):
         self.assertEqual("type=gha", build_only["with"]["cache-from"])
         self.assertEqual("type=gha,mode=max", build_only["with"]["cache-to"])
 
-    def test_build_image_workflow_runs_when_it_changes(self):
+    def test_build_image_workflow_is_manual_only_to_avoid_duplicate_push_builds(self):
         workflow = self.build_image_workflow()
 
-        self.assertIn(".github/workflows/build-image.yml", workflow[True]["push"]["paths"])
+        self.assertIn("workflow_dispatch", workflow[True])
+        self.assertNotIn("push", workflow[True])
 
     def _build_image_step(self, name):
         steps = self.build_image_workflow()["jobs"]["build-push"]["steps"]
