@@ -596,7 +596,7 @@ jobs:
           --environmenttype "OnPrem" \
           --authentication "UserPassword" \
           | tee official-test-results.log
-        grep -q "Test run completed: 2 passed, 0 failed, 0 skipped." official-test-results.log
+        grep -q "Test run completed: 3 passed, 0 failed, 0 skipped." official-test-results.log
         grep -q "PASS AdditionWorks" official-test-results.log
         grep -q "PASS MultiplicationWorks" official-test-results.log
 
